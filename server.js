@@ -1393,7 +1393,7 @@ const server = http.createServer(async (req, res) => {
       await notifier.markRead(ids === 'all' ? 'all' : (Array.isArray(ids) ? ids.map(String).slice(0, 200) : []));
       return json(res, await notifier.list());
     }
-    if (req.method === 'POST' && p === '/api/notifications/test') { await notifier.test(); return json(res, { ok: true }); }
+    if (req.method === 'POST' && p === '/api/notifications/test') return json(res, await notifier.test());
     if (req.method === 'GET' && p === '/api/clockify') return json(res, await clockify.status());
     if (req.method === 'POST' && p === '/api/clockify/start') {
       const body = await readBody(req);

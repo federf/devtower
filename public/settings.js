@@ -95,7 +95,7 @@ const ABOUT = {
     what: 'Te avisa cuando algo espera tu respuesta: mensajes y menciones en Slack, comentarios en tus tareas de Jira, cambios pedidos o CI rojo en tus PRs, reviews pedidas, master roto y hilos de Claude que terminaron.',
     details: ['Revisa cada minuto con consultas livianas. La primera vez solo registra lo existente: no te avisa de lo viejo.',
       'Siempre aparecen en 🔔 (y el número en el título de la pestaña). La notificación de macOS es opcional.',
-      'Para que al hacer clic se abra el link, instalá <code>brew install terminal-notifier</code>; sin eso igual llegan.'],
+      'Con devtower abierto llegan como avisos del navegador (activalos desde 🔔). Con devtower cerrado necesitan <code>brew install terminal-notifier</code>.'],
   },
   links: { what: 'Atajos a tus herramientas (CI, logs, APM, docs…). Se abren con ⌘K desde cualquier sección.', details: [] },
 };
@@ -224,7 +224,7 @@ document.addEventListener('click', async (e) => {
     if (act === 'notify-test') {
       if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
       if ('Notification' in window && Notification.permission === 'granted') new Notification('devtower · prueba', { body: 'Así te van a llegar los avisos mientras devtower está abierto.', icon: '/devtower.svg' });
-      else await getJson('/api/notifications/test', {});
+      else if (!(await getJson('/api/notifications/test', {})).native) { C.toast('Activá los avisos del navegador (🔔 → Activar avisos) o instalá terminal-notifier'); return; }
       C.toast('Notificación de prueba enviada'); return;
     }
     if (act === 'all-repos') { S.allRepos = true; C.render(); return; }

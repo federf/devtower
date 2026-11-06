@@ -33,11 +33,12 @@ test('PR, master and Claude thread transitions', async () => {
   const { n, sent } = setup();
   await n.prs({ mine: [pr()], toReview: [] });
   await n.master([{ repo: 'o/r', branch: 'main', broken: false }]);
-  await n.threads([{ id: 't1', running: true, title: 'Refactor', mtimeMs: 1 }]);
+  const T = Date.parse('2026-11-06T15:00:00Z');
+  await n.threads([{ id: 't1', running: true, title: 'Refactor', mtimeMs: T, prompts: 3 }]);
   assert.equal(sent.length, 0);
   await n.prs({ mine: [pr({ reviewDecision: 'CHANGES_REQUESTED', ci: 'FAILURE', updatedAt: 'b' })], toReview: [pr({ key: 'o/r#2', number: 2, author: 'bea' })] });
   await n.master([{ repo: 'o/r', branch: 'main', broken: true, head: { sha: 'abc', title: 'boom', url: 'u' } }]);
-  await n.threads([{ id: 't1', running: false, title: 'Refactor', mtimeMs: 2 }]);
+  await n.threads([{ id: 't1', running: false, title: 'Refactor', mtimeMs: T - 5 * 60_000, prompts: 4 }]);
   assert.equal(sent.length, 5);
   const labels = (await n.list()).events.map((e) => e.label);
   assert.deepEqual(labels.sort(), ['CI en rojo', 'Claude terminó', 'Te pidieron cambios', 'Te pidieron review', 'main en rojo'].sort());
@@ -48,8 +49,8 @@ test('disabled sources and native off are respected; mark read', async () => {
   const t0 = Math.floor(Date.parse('2026-11-06T15:00:00Z') / 1000);
   await n.slack([]);
   await n.slack([msg(t0 + 5)]);
-  await n.threads([{ id: 't1', running: true, title: 'x', mtimeMs: 1 }]);
-  await n.threads([{ id: 't1', running: false, title: 'x', mtimeMs: 2 }]);
+  await n.threads([{ id: 't1', running: true, title: 'x', mtimeMs: 1, prompts: 1 }]);
+  await n.threads([{ id: 't1', running: false, title: 'x', mtimeMs: 2, prompts: 2 }]);
   assert.equal(sent.length, 0);
   const before = await n.list();
   assert.deepEqual(before.events.map((e) => e.source), ['claude']);
@@ -78,6 +79,27 @@ test('no native notification while a devtower tab shows browser notifications', 
   assert.equal(sent.length, 0);
   assert.equal((await n.list()).unread, 1, 'still listed for the bell and the tab');
   browser = false;
-  await n.slack([msg(t0 + 1), msg(t0 + 2)]);
+  await n.slack([msg(t0 + 1), msg(t0 + 2, { author: 'Bea' })]);
   assert.equal(sent.length, 1);
+});
+
+test('no spam: flapping threads, transient GitHub states and repeats within 6 h stay silent', async () => {
+  const { n, sent } = setup();
+  const T = Date.parse('2026-11-06T15:00:00Z');
+  // a thread that keeps flipping running/idle without a new message from you
+  await n.threads([{ id: 't', running: true, title: 'x', mtimeMs: T, prompts: 5 }]);
+  for (const running of [false, true, false, true, false]) await n.threads([{ id: 't', running, title: 'x', mtimeMs: T - 10 * 60_000, prompts: 5 }]);
+  // your new message and the answer: exactly one notice, never again for that turn
+  await n.threads([{ id: 't', running: false, title: 'x', mtimeMs: T - 60_000, prompts: 6 }]);
+  assert.equal(sent.length, 0, 'not quiet long enough yet');
+  await n.threads([{ id: 't', running: false, title: 'x', mtimeMs: T - 4 * 60_000, prompts: 6 }]);
+  await n.threads([{ id: 't', running: false, title: 'x', mtimeMs: T - 8 * 60_000, prompts: 6 }]);
+  assert.equal(sent.length, 1);
+  // a PR that was already conflicting flaps through UNKNOWN: no notice
+  await n.prs({ mine: [pr({ mergeable: 'CONFLICTING' })], toReview: [] });
+  for (const m of ['UNKNOWN', 'CONFLICTING', 'UNKNOWN', 'CONFLICTING']) await n.prs({ mine: [pr({ mergeable: m, updatedAt: m + Math.random() })], toReview: [] });
+  // CI re-run: green → running → red notifies once; red → running → red does not
+  await n.prs({ mine: [pr({ ci: 'SUCCESS' })], toReview: [] });
+  for (const ci of ['PENDING', 'FAILURE', 'PENDING', 'FAILURE']) await n.prs({ mine: [pr({ ci, updatedAt: ci + Math.random() })], toReview: [] });
+  assert.deepEqual((await n.list()).events.map((e) => e.label).sort(), ['CI en rojo', 'Claude terminó']);
 });

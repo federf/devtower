@@ -6,19 +6,19 @@ import { execFile } from 'node:child_process';
 // already exists, so installing devtower never floods you.
 
 const MAX_EVENTS = 100;
+const REPEAT_WINDOW = 6 * 3_600_000; // the same notice (source + label + title) at most once per window
+const CLAUDE_IDLE = 3 * 60_000;      // a thread must be quiet this long to count as "waiting for you"
+const TRANSIENT = new Set(['UNKNOWN', 'PENDING', 'EXPECTED', null, undefined]); // GitHub still computing
 const DEFAULT_PREFS = { native: true, slack: true, jira: true, github: true, master: true, claude: true };
 
+// Native notifications only through terminal-notifier (clicking opens the link). osascript is never
+// used: macOS attributes its notifications to Script Editor, which opens when clicked.
+export const nativeAvailable = () => new Promise((resolve) => execFile('/usr/bin/which', ['terminal-notifier'], (err) => resolve(!err)));
 const nativeNotify = (title, body, url) => new Promise((resolve) => {
-  const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').slice(0, 220);
-  // terminal-notifier (if installed) opens the link when clicked; osascript always works
-  execFile('terminal-notifier', ['-title', title, '-message', body, '-group', 'devtower', ...(url ? ['-open', url] : [])], { timeout: 5_000 }, (err) => {
-    if (!err) return resolve();
-    execFile('/usr/bin/osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}"`], { timeout: 5_000 }, () => resolve());
-  });
+  execFile('terminal-notifier', ['-title', title, '-message', body, '-group', 'devtower', ...(url ? ['-open', url] : [])],
+    { timeout: 5_000 }, () => resolve());
 });
 
-// `browserActive()` true = an open devtower tab will show it as a browser notification, so the
-// native one is skipped (no duplicates, and no osascript/Script Editor notification).
 export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send = process.platform === 'darwin' ? nativeNotify : async () => {}, browserActive = () => false, now = () => Date.now() }) => {
   let state = null; // { seen: {...}, events: [...] }
   let queue = Promise.resolve();
@@ -30,7 +30,9 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     if (!events.length) return;
     const fresh = events.map((e) => ({ ...e, id: `${e.source}:${e.key}`, at: e.at || new Date(now()).toISOString(), read: false }));
     const known = new Set(state.events.map((e) => e.id));
-    const added = fresh.filter((e) => !known.has(e.id));
+    const recent = new Set(state.events.filter((e) => now() - Date.parse(e.at) < REPEAT_WINDOW).map((e) => `${e.source}|${e.label}|${e.title}`));
+    const added = fresh.filter((e) => !known.has(e.id) && !recent.has(`${e.source}|${e.label}|${e.title}`));
+    if (!added.length) return;
     state.events = [...added, ...state.events].slice(0, MAX_EVENTS);
     if (!on('native') || browserActive()) return;
     // a burst becomes one native notification
@@ -67,15 +69,16 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     const snap = {};
     const events = [];
     for (const p of data.mine) {
-      snap[p.key] = { d: p.reviewDecision, u: p.unresolved, ci: p.ci, m: p.mergeable };
       const was = prev?.[p.key];
+      const keep = (now, before) => (TRANSIENT.has(now) && before !== undefined ? before : now);
+      snap[p.key] = { d: p.reviewDecision, u: p.unresolved, ci: keep(p.ci, was?.ci), m: keep(p.mergeable, was?.m) };
       if (!was) continue;
       const base = { source: 'github', url: p.url, view: 'prs', title: `${p.repoName}#${p.number}`, body: p.title };
       if (p.reviewDecision === 'CHANGES_REQUESTED' && was.d !== 'CHANGES_REQUESTED') events.push({ ...base, key: `${p.key}:changes:${p.updatedAt}`, label: 'Te pidieron cambios', urgent: true });
       else if (p.unresolved > (was.u || 0)) events.push({ ...base, key: `${p.key}:comments:${p.unresolved}:${p.updatedAt}`, label: `${p.unresolved - (was.u || 0)} comentario(s) nuevo(s) en tu PR`, urgent: true });
-      if (['FAILURE', 'ERROR'].includes(p.ci) && !['FAILURE', 'ERROR'].includes(was.ci)) events.push({ ...base, key: `${p.key}:ci:${p.updatedAt}`, label: 'CI en rojo', body: `${p.title}${p.checks?.find((c) => c.state === 'fail') ? ` · ✗ ${p.checks.find((c) => c.state === 'fail').name}` : ''}`, urgent: true });
-      if (p.mergeable === 'CONFLICTING' && was.m !== 'CONFLICTING') events.push({ ...base, key: `${p.key}:conflict:${p.updatedAt}`, label: 'Conflicto con la base' });
-      if (p.reviewDecision === 'APPROVED' && was.d !== 'APPROVED') events.push({ ...base, key: `${p.key}:approved`, label: 'PR aprobado' });
+      if (['FAILURE', 'ERROR'].includes(p.ci) && was.ci === 'SUCCESS') events.push({ ...base, key: `${p.key}:ci:${p.updatedAt}`, label: 'CI en rojo', body: `${p.title}${p.checks?.find((c) => c.state === 'fail') ? ` · ✗ ${p.checks.find((c) => c.state === 'fail').name}` : ''}`, urgent: true });
+      if (p.mergeable === 'CONFLICTING' && was.m === 'MERGEABLE') events.push({ ...base, key: `${p.key}:conflict:${p.updatedAt}`, label: 'Conflicto con la base' });
+      if (p.reviewDecision === 'APPROVED' && was.d && was.d !== 'APPROVED') events.push({ ...base, key: `${p.key}:approved`, label: 'PR aprobado' });
     }
     for (const p of data.toReview) {
       snap[`review:${p.key}`] = 1;
@@ -94,21 +97,33 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     })));
   });
 
-  // a Claude thread that was running and stopped is waiting for you
+  // a Claude thread is waiting for you once per turn: you sent a new message (prompt count grew)
+  // and the thread has been quiet for a while. File activity flaps, so "running" is not used.
   const threads = (list) => run(async () => {
-    const prev = new Set(state.seen.running || []);
-    const nowRunning = list.filter((t) => t.running).map((t) => t.id);
-    const first = !state.seen.running;
-    state.seen.running = nowRunning;
+    const first = !state.seen.turns;
+    const turns = state.seen.turns || {};
+    const due = [];
+    for (const t of list) {
+      const notified = turns[t.id];
+      if (first || notified === undefined) { turns[t.id] = t.prompts; continue; }
+      const quiet = !t.running && now() - t.mtimeMs >= CLAUDE_IDLE;
+      if (quiet && t.prompts > notified) { turns[t.id] = t.prompts; due.push(t); }
+    }
+    state.seen.turns = Object.fromEntries(Object.entries(turns).slice(-500));
+    delete state.seen.running;
     if (first || !on('claude')) return;
-    await emit(list.filter((t) => prev.has(t.id) && !t.running).map((t) => ({
-      source: 'claude', key: `${t.id}:${t.mtimeMs}`, label: 'Claude terminó', title: t.title.slice(0, 80), body: t.project || '', view: 'threads', thread: t.id,
+    await emit(due.map((t) => ({
+      source: 'claude', key: `${t.id}:${t.prompts}`, label: 'Claude terminó', title: t.title.slice(0, 80), body: t.project || '', view: 'threads', thread: t.id,
     })));
   });
 
   const list = async () => { await load(); return { events: state.events, unread: state.events.filter((e) => !e.read).length }; };
   const markRead = (ids) => run(async () => { state.events.forEach((e) => { if (ids === 'all' || ids.includes(e.id)) e.read = true; }); });
-  const test = () => send('devtower · prueba', 'Las notificaciones funcionan.');
+  const test = async () => {
+    if (!(await nativeAvailable())) return { native: false };
+    await send('devtower · prueba', 'Las notificaciones funcionan.');
+    return { native: true };
+  };
 
   return { slack, jira, prs, master, threads, list, markRead, test };
 };
