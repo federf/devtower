@@ -1,0 +1,19 @@
+{
+  "user": { "name": "Ada" },
+  "reposDir": "~/Projects",
+  "github": { "org": "my-org", "coreRepos": ["backend", "frontend"] },
+  "jira": {
+    "site": "https://my-company.atlassian.net",
+    "email": "ada@example.com",
+    "ticketPattern": "(?:WEB|API)-\\d{1,7}",
+    "supportLabels": ["customer_escalated"]
+  },
+  "deployCheck": {
+    "command": "~/scripts/is-pr-in-prod.sh {url}",
+    "repos": ["my-org/backend"]
+  },
+  "links": [
+    { "name": "CI", "url": "https://ci.example.com/", "icon": "⚙", "group": "CI" },
+    { "name": "Logs", "url": "https://logs.example.com/", "icon": "≡", "group": "Observabilidad" }
+  ]
+}

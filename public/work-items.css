@@ -1,0 +1,37 @@
+#rail { min-height: 0; overflow-y: auto; }
+.work-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
+.work-toolbar strong { font-size: 18px; }
+.work-toolbar p { margin: 5px 0 0; }
+.work-list { max-width: 1100px; display: grid; gap: 18px; }
+.work-item { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.work-item header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.work-item h2 { margin: 0 0 8px; font-size: 18px; overflow-wrap: anywhere; }
+.work-item h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.work-item .m { color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.work-item section { margin-top: 18px; }
+.work-next { padding: 12px 14px; background: var(--panel2); border-left: 3px solid var(--accent); border-radius: 6px; }
+.work-next b { color: var(--accent); font-size: 12px; }
+.work-next p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.work-notes { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.work-thread-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.work-thread-links button { max-width: 100%; text-align: left; overflow-wrap: anywhere; }
+.work-links { margin: 0; padding-left: 18px; overflow-wrap: anywhere; }
+#work-item-dialog { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 24px; width: min(700px, calc(100vw - 24px)); max-height: 90vh; overflow: auto; box-shadow: var(--shadow); }
+#work-item-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+#work-item-dialog h2 { margin: 0; font-size: 20px; }
+#wi-form { display: grid; gap: 14px; }
+#wi-form label { display: grid; gap: 5px; font-weight: 500; }
+#wi-form small { color: var(--muted); font-size: 12px; font-weight: 400; }
+#wi-form input:not([type='checkbox']), #wi-form textarea, #wi-form select { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+#wi-form textarea { resize: vertical; }
+#wi-form fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+#wi-threads { max-height: 170px; overflow: auto; margin-top: 8px; }
+#wi-threads label { display: flex; align-items: start; gap: 8px; padding: 6px 0; font-weight: 400; }
+#wi-threads label[hidden] { display: none; }
+#wi-threads small { display: block; overflow-wrap: anywhere; }
+#wi-form footer { display: flex; justify-content: end; gap: 8px; }
+#wi-error:empty { display: none; }
+@media (max-width: 600px) {
+  .work-toolbar, .work-item header { flex-direction: column; align-items: stretch; }
+  .work-item { padding: 14px; }
+}

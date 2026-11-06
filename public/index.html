@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>devtower</title>
+  <link rel="icon" type="image/svg+xml" href="/devtower.svg">
+  <script>try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('theme')) || 'light'; } catch { document.documentElement.dataset.theme = 'light'; }</script>
+  <script src="/config.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/work.css">
+  <link rel="stylesheet" href="/work-items.css">
+  <link rel="stylesheet" href="/layout.css">
+</head>
+<body>
+  <div id="app" class="no-dock">
+    <nav id="rail">
+      <div class="logo" title="devtower · tu torre de control de desarrollo"><img src="/devtower.svg" alt="" width="32" height="32"><span>devtower</span></div>
+      <button data-view="today" class="nav active" title="Hoy: lo que necesita tu atención, priorizado (PRs, Slack, Jira)
+⌥B  ·  ⌘1"><span>◎</span><b>Hoy</b><i id="b-today"></i></button>
+      <button data-view="work-items" class="nav" title="Trabajos: contexto y próximo paso, sin IA automática · ⌥G"><span>◇</span><b>Trabajos</b></button>
+      <button data-view="threads" class="nav" title="Hilos: tus conversaciones de Claude Code, con búsqueda y filtro por fecha
+⌥H  ·  ⌘2"><span>✦</span><b>Hilos</b><i id="b-threads"></i></button>
+      <button data-view="tasks" class="nav" title="Tareas: tus issues de Jira vinculadas con hilos y PRs
+⌥T  ·  ⌘3"><span>☰</span><b>Tareas</b></button>
+      <button data-view="prs" class="nav" title="Pull requests: los tuyos y los que tenés que revisar
+⌥R  ·  ⌘4"><span>⑂</span><b>PRs</b><i id="b-prs"></i></button>
+      <button data-view="slack" class="nav" title="Slack: mensajes pendientes de tu respuesta
+⌥S  ·  ⌘5"><span>#</span><b>Slack</b><i id="b-slack"></i></button>
+      <div class="spacer"></div>
+      <div id="usage-widget">
+        <div class="uw-metric">
+          <span class="uw-label">Bloque</span>
+          <span class="uw-value" id="uw-block-cost">—</span>
+          <div class="uw-bar"><div id="uw-block-fill" class="uw-fill"></div></div>
+        </div>
+        <div class="uw-metric">
+          <span class="uw-label">Semana</span>
+          <span class="uw-value" id="uw-week-cost">—</span>
+        </div>
+      </div>
+      <button id="theme" class="nav" title="Cambiar entre tema claro y oscuro
+⌘⇧L"><span>☀</span><b>Tema</b></button>
+      <button id="toggle-dock" class="nav" title="Mostrar u ocultar el panel de chat
+⌘B"><span>◧</span><b>Chat</b></button>
+      <button id="help-btn" class="nav" title="Ver todos los atajos de teclado
+?  o  ⌘/"><span>⌨</span><b>Atajos</b></button>
+    </nav>
+
+    <main id="main">
+      <header id="topbar">
+        <h1 id="view-title">Hoy</h1>
+        <input id="search" type="search" placeholder="Buscar…  ( / )" title="Filtra PRs y Slack al instante y busca en el texto completo de tus hilos: términos, tickets, números de PR
+/   ·   ⌘K abre accesos rápidos">
+        <select id="days" title="Mostrar solo hilos cuya última interacción cae en este rango"></select>
+        <select id="sdays" title="Hasta cuánto tiempo atrás buscar en los hilos (por defecto 1 año)" hidden></select>
+        <div id="stats" hidden></div><span class="spacer"></span>
+        <button id="refresh" class="btn ghost" title="Recarga hilos y PRs. En Slack y Tareas consulta con Claude y consume cuota
+⌘⇧R">↻ Actualizar</button>
+      </header>
+      <section id="content"></section>
+    </main>
+
+    <div id="resizer" title="Arrastrá para cambiar el ancho del chat"></div>
+
+    <aside id="dock">
+      <div id="tabs"></div>
+      <div id="activity"></div>
+      <div id="sessionbar"></div>
+      <div id="chat">
+        <div id="transcript"></div>
+        <div id="composer">
+          <div id="popup" hidden></div>
+          <div id="adv" hidden>
+            <label>Directorios extra (uno por línea)<textarea id="adv-dirs" rows="2"></textarea></label>
+            <label>Instrucciones extra (append system prompt)<textarea id="adv-sys" rows="2"></textarea></label>
+            <label>Tools bloqueadas (separadas por coma)<input id="adv-deny" placeholder="Bash(rm:*), WebFetch"></label>
+            <label>Presupuesto máx. USD<input id="adv-budget" type="number" step="0.5" min="0"></label>
+            <div id="adv-allowed"></div>
+          </div>
+          <div id="ctx-tray"></div>
+          <textarea id="input" rows="3" placeholder="Mensaje · / comandos y skills · @ archivos · pegá imágenes  (Enter envía · Shift+Enter nueva línea)"></textarea>
+          <div class="row ctrls">
+            <button id="attach" class="btn sm ghost" title="Adjuntar imágenes (también podés pegar con ⌘V o arrastrar)
+⌥U">📎</button><input id="file" type="file" accept="image/*" multiple hidden>
+            <label class="sel" title="Modelo que responde en este hilo. 'Default' usa el configurado en Claude Code
+⌥P para rotar"><span>◈</span><select id="model"></select></label>
+            <label class="sel" title="Esfuerzo de razonamiento: más alto = piensa más y tarda/cuesta más
+⌥E para rotar"><span>◔</span><select id="effort"></select></label>
+            <label class="sel" title="Permisos: qué puede hacer Claude sin preguntar
+⇧Tab para rotar"><span>⛨</span><select id="mode"></select></label>
+            <label class="sel wide" title="Proyecto (carpeta) donde corre Claude. Solo se elige al crear el hilo"><span>▣</span><select id="cwd"></select></label>
+            <button id="adv-toggle" class="btn sm ghost" title="Opciones avanzadas: directorios extra, instrucciones, tools bloqueadas, presupuesto
+⌥,">⚙</button>
+          </div>
+          <div class="row actions">
+            <span class="hint">↵ enviar · ⇧↵ nueva línea · ⇧Tab modo · ⌘/ atajos</span>
+            <div class="spacer"></div>
+            <button id="stop" class="btn danger" hidden title="Interrumpe la respuesta en curso
+Esc">■ Detener</button>
+            <button id="send" class="btn primary" title="Enviar mensaje
+↵  (⇧↵ para nueva línea)">Enviar ↵</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <script src="/app.js" type="module"></script>
+  <script src="/work.js" type="module"></script>
+  <script src="/work-items.js" type="module"></script>
+  <script src="/palette.js" type="module"></script>
+  <script src="/health.js" type="module"></script>
+  <script src="/deploy.js" type="module"></script>
+  <script src="/close-task.js" type="module"></script>
+  <script src="/live-reload.js" type="module"></script>
+</body>
+</html>

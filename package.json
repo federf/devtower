@@ -1,0 +1,21 @@
+{
+  "name": "devtower",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "start": "node server.js",
+    "test": "node --test",
+    "up": "node scripts/service.cjs up",
+    "down": "node scripts/service.cjs down",
+    "status": "node scripts/service.cjs status",
+    "autostart:on": "node scripts/service.cjs autostart on",
+    "autostart:off": "node scripts/service.cjs autostart off"
+  },
+  "description": "Torre de control local para devs: Jira, PRs, CI, Slack y Claude Code en una sola pantalla",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
