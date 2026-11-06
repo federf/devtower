@@ -31,7 +31,8 @@ export const DEFAULTS = {
     repos: [],          // owner/repo list the command can verify
   },
   links: [],            // ⌘K quick access: [{ name, url, icon, group }]
-  logs: { hint: '' },   // how Claude should search production logs (e.g. which skills/MCP to use)
+  logs: { hint: '' },
+  clockify: { workspaceId: '' }, // filled when the API key is linked   // how Claude should search production logs (e.g. which skills/MCP to use)
 };
 
 const merge = (base, extra) => {

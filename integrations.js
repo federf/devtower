@@ -280,8 +280,12 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
     return { ts: data.ts, link };
   };
 
+  // after (un)linking a token: drop cached secrets and identities
+  const forget = () => { secrets.clear(); me = null; workspace = ''; myself = undefined; };
+
   return {
     has,
+    forget,
     jira: { search: searchJira, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
     slack: { pending: pendingSlack, send: sendSlack },
   };

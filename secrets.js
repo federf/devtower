@@ -48,6 +48,17 @@ export const readSecret = async (name) => {
   return file ? { account: '', password: String(file) } : null;
 };
 
+export const removeSecret = async (name) => {
+  if (process.platform === 'darwin') {
+    for (const service of [`${APP}-${name}`, `trama-${name}`]) await run('/usr/bin/security', ['delete-generic-password', '-s', service]);
+  } else await run('secret-tool', ['clear', 'service', `${APP}-${name}`]);
+  const all = fromFile();
+  if (name in all) {
+    delete all[name];
+    fs.writeFileSync(SECRETS_FILE, JSON.stringify(all, null, 2), { mode: 0o600 });
+  }
+};
+
 // Used by setup. On macOS the token goes through the Keychain CLI; elsewhere secret-tool reads
 // it from stdin, falling back to the 0600 file.
 export const storeSecret = async (name, password, account = process.env.USER || APP) => {

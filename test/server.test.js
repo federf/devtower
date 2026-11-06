@@ -17,7 +17,7 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
   const project = path.join(home, '.claude', 'projects', 'fixture');
   await fs.mkdir(path.join(app, 'public'), { recursive: true });
   await fs.mkdir(project, { recursive: true });
-  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'package.json']) {
+  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'package.json']) {
     if (name === 'server.js') {
       const original = await fs.readFile(path.join(source, name), 'utf8');
       const guarded = original.replace("import { spawn, execFile } from 'node:child_process';",
@@ -195,6 +195,22 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     assert.equal(issue.status, 503);
     assert.equal(issue.data.code, 'token_missing');
     assert.equal(await fs.readFile(path.join(root, 'claude-called'), 'utf8'), before);
+  });
+
+  await t.test('settings save validates input, ignores unknown keys and needs a manual restart outside launchd', async () => {
+    assert.equal((await request('/api/settings', { jira: { ticketPattern: '([' } })).status, 400);
+    assert.equal((await request('/api/settings', { jira: { site: 'http://insecure.example' } })).status, 400);
+    assert.equal((await request('/api/settings', { user: { name: 'Ada' } }, { 'x-cockpit': '' })).status, 403);
+    const saved = await request('/api/settings', { user: { name: 'Ada' }, github: { org: 'acme', coreRepos: ['api', 'bad repo!'] },
+      links: [{ name: 'CI', url: 'https://ci.example' }, { name: 'Bad', url: 'javascript:alert(1)' }], token: 'xoxp-should-not-persist' });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.data.restart, 'manual');
+    assert.deepEqual(saved.data.config.github, { org: 'acme', coreRepos: ['api'] });
+    assert.deepEqual(saved.data.config.links.map((l) => l.name), ['CI']);
+    const file = await fs.readFile(path.join(root, 'config.json'), 'utf8');
+    assert.doesNotMatch(file, /xoxp-should-not-persist/);
+    assert.equal((await fs.stat(path.join(root, 'config.json'))).mode & 0o777, 0o600);
+    assert.equal((await request('/api/settings/link', { name: 'nope', token: 'x' })).status, 400);
   });
 
   await t.test('streaming chat reports the same human-readable limit', async () => {

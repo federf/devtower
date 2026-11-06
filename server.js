@@ -11,6 +11,7 @@ import { createLiveReload } from './live-reload.js';
 import { createWorkItems } from './work-items.js';
 import { createIntegrations } from './integrations.js';
 import { loadConfig, publicConfig } from './config.js';
+import { createSettings } from './settings.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4317);
@@ -26,6 +27,10 @@ const MAX_THREADS = 1500;
 const DAY_MS = 86_400_000;
 const REFRESH_MS = 5 * 60_000;
 // DEVTOWER_KEYCHAIN=0 disables direct APIs (tests): Slack/Jira fall back to Claude
+const settings = createSettings({ loadConfig, forget: () => direct.forget(), gh: process.env.GH_BIN || 'gh' });
+// config changes need a fresh process: under launchd (autostart) a non-zero exit is relaunched
+const UNDER_LAUNCHD = String(process.env.XPC_SERVICE_NAME || '').startsWith('local.devtower');
+const restartSoon = () => { if (UNDER_LAUNCHD) setTimeout(() => process.exit(75), 300); return UNDER_LAUNCHD ? 'auto' : 'manual'; };
 const direct = createIntegrations({ jiraSite: CONFIG.jira.site, jiraEmail: CONFIG.jira.email,
   ...(process.env.DEVTOWER_KEYCHAIN === '0' ? { readSecret: async () => null } : {}) });
 
@@ -1319,6 +1324,26 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/deploy-check') return json(res, await deployCheck((await readBody(req)).key));
     if (req.method === 'GET' && p === '/api/health') return json(res, await loadHealth(url.searchParams.get('refresh') === '1'));
+    if (req.method === 'GET' && p === '/api/settings') return json(res, await settings.status());
+    if (req.method === 'POST' && p === '/api/settings') {
+      const config = await settings.save(await readBody(req));
+      return json(res, { config, restart: restartSoon() });
+    }
+    if (req.method === 'POST' && p === '/api/settings/link') {
+      const body = await readBody(req);
+      const linked = await settings.link(body);
+      return json(res, { ...linked, restart: body.name === 'jira' ? restartSoon() : 'none' });
+    }
+    if (req.method === 'POST' && p === '/api/settings/unlink') {
+      await settings.unlink(String((await readBody(req)).name));
+      return json(res, { ok: true });
+    }
+    if (req.method === 'GET' && p === '/api/settings/slack-manifest') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end(await fsp.readFile(path.join(ROOT, 'docs', 'slack-manifest.json')));
+    }
+    if (req.method === 'GET' && p === '/api/settings/jira-suggest') return json(res, await settings.suggestJira());
+    if (req.method === 'GET' && p === '/api/settings/repos') return json(res, { repos: await settings.repos(url.searchParams.get('org')) });
     if (req.method === 'GET' && p === '/config.js') {
       res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(`window.DEVTOWER = ${JSON.stringify(publicConfig(CONFIG))};`);

@@ -152,6 +152,7 @@ const renderToday = () => {
   const section = (n, title, hint) => (by(n).length ? `${sectionHead(title, by(n).length, hint)}<div class="list-wide">${by(n).map(rowHtml).join('')}</div>` : '');
   const live = running();
   return `
+    ${window.DEVTOWER?.configured === false ? '<div class="banner"><b>Primera vez acá</b><p>Vinculá GitHub, Jira y Slack para ver tus pendientes.</p><button class="btn sm primary" data-go="settings">Configurar devtower</button></div>' : ''}
     <div class="hero"><div><h2>${hello}${window.DEVTOWER?.userName ? `, ${esc(window.DEVTOWER.userName)}` : ''}</h2><p>${date} · ${lead}</p></div></div>
     <div class="kpis">
       ${kpi(urgent, 'urgente', urgent ? 'bad' : '', 'prs')}
