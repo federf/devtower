@@ -17,7 +17,9 @@ const nativeNotify = (title, body, url) => new Promise((resolve) => {
   });
 });
 
-export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send = process.platform === 'darwin' ? nativeNotify : async () => {}, now = () => Date.now() }) => {
+// `browserActive()` true = an open devtower tab will show it as a browser notification, so the
+// native one is skipped (no duplicates, and no osascript/Script Editor notification).
+export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send = process.platform === 'darwin' ? nativeNotify : async () => {}, browserActive = () => false, now = () => Date.now() }) => {
   let state = null; // { seen: {...}, events: [...] }
   let queue = Promise.resolve();
   const load = async () => (state ??= await readJson('notifications.json', { seen: {}, events: [] }));
@@ -30,7 +32,7 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     const known = new Set(state.events.map((e) => e.id));
     const added = fresh.filter((e) => !known.has(e.id));
     state.events = [...added, ...state.events].slice(0, MAX_EVENTS);
-    if (!on('native')) return;
+    if (!on('native') || browserActive()) return;
     // a burst becomes one native notification
     if (added.length > 3) await send('devtower', `${added.length} novedades: ${[...new Set(added.map((e) => e.label))].join(', ')}`);
     else for (const e of added) await send(`devtower · ${e.label}`, `${e.title}${e.body ? ` — ${e.body}` : ''}`, e.url);

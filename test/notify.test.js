@@ -65,3 +65,19 @@ test('a burst from one source becomes a single native notification', async () =>
   assert.deepEqual(sent, ['devtower | 5 novedades: Slack']);
   assert.equal((await n.list()).unread, 5);
 });
+
+test('no native notification while a devtower tab shows browser notifications', async () => {
+  const store = {};
+  const sent = [];
+  let browser = true;
+  const n = createNotifier({ readJson: async (k, f) => structuredClone(store[k] ?? f), writeJson: async (k, d) => { store[k] = structuredClone(d); },
+    send: async (t) => { sent.push(t); }, browserActive: () => browser, now: () => Date.parse('2026-11-06T15:00:00Z') });
+  const t0 = Math.floor(Date.parse('2026-11-06T15:00:00Z') / 1000);
+  await n.slack([]);
+  await n.slack([msg(t0 + 1)]);
+  assert.equal(sent.length, 0);
+  assert.equal((await n.list()).unread, 1, 'still listed for the bell and the tab');
+  browser = false;
+  await n.slack([msg(t0 + 1), msg(t0 + 2)]);
+  assert.equal(sent.length, 1);
+});

@@ -221,7 +221,12 @@ document.addEventListener('click', async (e) => {
   S.msg = null;
   try {
     if (act === 'refresh') { S.data = null; S.loading = false; C.render(); return; }
-    if (act === 'notify-test') { await getJson('/api/notifications/test', {}); C.toast('Notificación de prueba enviada'); return; }
+    if (act === 'notify-test') {
+      if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+      if ('Notification' in window && Notification.permission === 'granted') new Notification('devtower · prueba', { body: 'Así te van a llegar los avisos mientras devtower está abierto.', icon: '/devtower.svg' });
+      else await getJson('/api/notifications/test', {});
+      C.toast('Notificación de prueba enviada'); return;
+    }
     if (act === 'all-repos') { S.allRepos = true; C.render(); return; }
     if (act === 'discard') { S.form = structuredClone(S.data.config); S.dirty = false; C.render(); return; }
     if (act === 'link-add') { S.form.links.push({ name: '', url: '', icon: '↗', group: '' }); markDirty(); C.render(); return; }
