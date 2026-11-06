@@ -12,6 +12,8 @@ import { createWorkItems } from './work-items.js';
 import { createIntegrations } from './integrations.js';
 import { loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
+import { createClockify } from './clockify.js';
+import { readSecret } from './secrets.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4317);
@@ -27,7 +29,8 @@ const MAX_THREADS = 1500;
 const DAY_MS = 86_400_000;
 const REFRESH_MS = 5 * 60_000;
 // DEVTOWER_KEYCHAIN=0 disables direct APIs (tests): Slack/Jira fall back to Claude
-const settings = createSettings({ loadConfig, forget: () => direct.forget(), gh: process.env.GH_BIN || 'gh' });
+const clockify = createClockify({ readSecret: process.env.DEVTOWER_KEYCHAIN === '0' ? async () => null : readSecret, ticketPattern: CONFIG.jira.ticketPattern });
+const settings = createSettings({ loadConfig, forget: () => { direct.forget(); clockify.forget(); }, gh: process.env.GH_BIN || 'gh' });
 // config changes need a fresh process: under launchd (autostart) a non-zero exit is relaunched
 const UNDER_LAUNCHD = String(process.env.XPC_SERVICE_NAME || '').startsWith('local.devtower');
 const restartSoon = () => { if (UNDER_LAUNCHD) setTimeout(() => process.exit(75), 300); return UNDER_LAUNCHD ? 'auto' : 'manual'; };
@@ -895,6 +898,22 @@ Devolvé ÚNICAMENTE el texto del comentario.`;
   return text.trim();
 };
 
+// ------------------------------------------------------------------ Clockify timer
+
+const CLOCKIFY_ID = /^[a-f0-9]{24}$/;
+const clockifyEntry = (b = {}) => {
+  const description = String(b.description || '').trim().slice(0, 3000);
+  if (!description) throw Object.assign(new Error('Falta la descripción'), { status: 400 });
+  return { description, projectId: CLOCKIFY_ID.test(String(b.projectId || '')) ? b.projectId : '',
+    tagIds: (Array.isArray(b.tagIds) ? b.tagIds : []).filter((t) => CLOCKIFY_ID.test(String(t))).slice(0, 20), billable: Boolean(b.billable) };
+};
+const startTaskTimer = async (key) => {
+  const issueKey = assertJiraKey(key);
+  const cached = (await readJsonFile('jira.json', { items: [] })).items.find((i) => i.key === issueKey);
+  const full = await direct.jira.issue(issueKey).catch(() => null);
+  return clockify.start(await clockify.taskEntry({ key: issueKey, summary: full?.summary || cached?.summary || '', type: full?.type || cached?.type || '', labels: full?.labels || [] }));
+};
+
 // ------------------------------------------------------------------ Slack
 
 const slackState = { running: false, error: null, errorCode: null, resetAt: null };
@@ -1324,6 +1343,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/deploy-check') return json(res, await deployCheck((await readBody(req)).key));
     if (req.method === 'GET' && p === '/api/health') return json(res, await loadHealth(url.searchParams.get('refresh') === '1'));
+    if (req.method === 'GET' && p === '/api/clockify') return json(res, await clockify.status());
+    if (req.method === 'POST' && p === '/api/clockify/start') {
+      const body = await readBody(req);
+      return json(res, { running: body.key ? await startTaskTimer(body.key) : await clockify.start(clockifyEntry(body)) });
+    }
+    if (req.method === 'POST' && p === '/api/clockify/stop') { await clockify.stop(); return json(res, { ok: true }); }
     if (req.method === 'GET' && p === '/api/settings') return json(res, await settings.status());
     if (req.method === 'POST' && p === '/api/settings') {
       const config = await settings.save(await readBody(req));

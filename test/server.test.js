@@ -17,7 +17,7 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
   const project = path.join(home, '.claude', 'projects', 'fixture');
   await fs.mkdir(path.join(app, 'public'), { recursive: true });
   await fs.mkdir(project, { recursive: true });
-  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'package.json']) {
+  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'package.json']) {
     if (name === 'server.js') {
       const original = await fs.readFile(path.join(source, name), 'utf8');
       const guarded = original.replace("import { spawn, execFile } from 'node:child_process';",
@@ -211,6 +211,10 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     assert.doesNotMatch(file, /xoxp-should-not-persist/);
     assert.equal((await fs.stat(path.join(root, 'config.json'))).mode & 0o777, 0o600);
     assert.equal((await request('/api/settings/link', { name: 'nope', token: 'x' })).status, 400);
+    const clock = await request('/api/clockify');
+    assert.equal(clock.status, 503);
+    assert.equal(clock.data.code, 'token_missing');
+    assert.equal((await request('/api/clockify/start', { description: '' })).status, 400);
   });
 
   await t.test('streaming chat reports the same human-readable limit', async () => {

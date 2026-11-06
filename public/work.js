@@ -188,6 +188,7 @@ const taskCard = (t) => {
       ${j ? btn('task-comment', 'Comentar', false, 'Publicar un comentario en el ticket de Jira (con confirmación)') : ''}
       ${j ? btn('task-transition', 'Mover estado', false, 'Cambiar el estado del ticket en Jira (con confirmación)') : ''}
       ${btn('task-logs', 'Logs', false, 'Nuevo hilo para investigar logs de producción con las herramientas de logs que tenga Claude, solo lectura')}
+      ${j ? C.timerButton?.(t.key) || '' : ''}
       ${j ? btn('task-deploy', '🚀 ¿En prod?', false, 'Busca los PRs de la tarea y sus subtareas y corre tu comando de verificación de deploy en cada uno') : ''}
     </div>
     ${C.deployPanel?.(t.key) || ''}
@@ -221,7 +222,7 @@ const boardCard = (t, selected) => {
     t.prs.length ? `<span title="${t.prs.length} PR(s)">⑂ ${t.prs.length}</span>` : ''].join('');
   return `<button class="kcard ${selected ? 'on' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado">
     <span class="kkey">${esc(t.key)}</span><span class="ksum">${esc(j.summary)}</span>
-    <span class="kmeta"><span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}</span></button>`;
+    <span class="kmeta"><span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
 };
 
 const renderBoard = (tasks, board) => {
