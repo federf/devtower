@@ -1,4 +1,4 @@
-import { groupThreadProjects, threadProject } from './thread-projects.js';
+import { groupThreadProjects, startWorkspaces, threadProject } from './thread-projects.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -14,6 +14,7 @@ const state = {
   q: '',
   threads: [],
   archivedThreads: [],
+  repos: [],
   threadFilter: 'active',
   threadRevision: 0,
   threadMutations: new Set(),
@@ -338,7 +339,8 @@ const render = () => {
         data-project="*" title="Ver hilos de todos los proyectos">Todos <b>${available.length}</b></button>
     </div>
     <div class="project-context"><strong>${esc(selected?.name || 'Todos los proyectos')}</strong>
-      ${selected?.directory ? `<span title="${esc(selected.directory)}">${esc(selected.directory)}</span>` : `<span>${projects.length} proyectos</span>`}</div>
+      ${selected?.directory ? `<span title="${esc(selected.directory)}">${esc(selected.directory)}</span>` : `<span>${projects.length} proyectos</span>`}
+      ${selected?.directory ? `<button class="btn sm primary" data-act="new-thread-in" data-cwd="${esc(selected.directory)}" title="Abre un hilo nuevo de Claude en esta carpeta">＋ Nuevo hilo aquí</button>` : ''}</div>
     <section class="list-wide" role="tabpanel" id="project-thread-panel" aria-labelledby="${selectedId}">${views.threads()}</section>`;
   } else if (state.view === 'prs') {
     const tabs = [['mine', 'Mis PRs'], ['toReview', 'Para revisar'], ['reviewed', 'Ya revisados por mí'], ['health', 'Master y métricas']];
@@ -398,10 +400,22 @@ const persistTabs = () => {
   store.set('tabs', state.tabs.map((t) => Object.fromEntries(TAB_FIELDS.map((f) => [f, t[f]]))));
   store.set('active', state.active);
 };
-const knownCwds = () => {
-  const counts = {};
-  state.threads.forEach((t) => { if (t.cwd) counts[t.cwd] = (counts[t.cwd] || 0) + 1; });
-  return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+const workspaces = () => startWorkspaces(state.threads, state.repos);
+// main workspaces (repos and folders, no worktrees), most recently used first
+const knownCwds = () => workspaces().main.map((w) => w.dir);
+const cwdOptions = (current) => {
+  const { main, worktrees } = workspaces();
+  const opt = (dir, label) => `<option value="${esc(dir)}" title="${esc(dir)}">${esc(label)}</option>`;
+  const listed = new Set([...main, ...worktrees].map((w) => w.dir));
+  const used = main.filter((w) => w.count);
+  const idle = main.filter((w) => !w.count).sort((a, b) => a.name.localeCompare(b.name));
+  return (current && !listed.has(current) ? opt(current, current.split('/').pop()) : '')
+    + (used.length ? `<optgroup label="Recientes">${used.map((w) => opt(w.dir, w.name)).join('')}</optgroup>` : '')
+    + (idle.length ? `<optgroup label="Repos">${idle.map((w) => opt(w.dir, w.name)).join('')}</optgroup>` : '')
+    + (worktrees.length ? `<optgroup label="Worktrees recientes">${worktrees.map((w) => opt(w.dir, `${w.parent} › ${w.name}`)).join('')}</optgroup>` : '');
+};
+const loadWorkspaces = async () => {
+  try { state.repos = (await (await api('/api/workspaces')).json()).repos || []; } catch { /* threads still give folders */ }
 };
 const showDock = () => { $('#app').classList.remove('no-dock'); $('#app').classList.add('dock-open'); };
 let rafPending = false;
@@ -583,8 +597,7 @@ const renderDock = (full) => {
   $('#effort').value = tab.effort;
   $('#mode').value = tab.mode;
   const sel = $('#cwd');
-  const cwds = [...new Set([tab.cwd, ...knownCwds()].filter(Boolean))];
-  sel.innerHTML = cwds.map((c) => `<option value="${esc(c)}" title="${esc(c)}">${esc(c.split('/').pop())}</option>`).join('');
+  sel.innerHTML = cwdOptions(tab.cwd);
   sel.value = tab.cwd;
   sel.disabled = Boolean(tab.sessionId);
   $('#model').disabled = $('#effort').disabled = false;
@@ -897,6 +910,7 @@ document.addEventListener('click', async (e) => {
     case 'thread-delete': return confirmThreadDeletion(actEl.dataset.id);
     case 'open-thread': return openThread(actEl.dataset.id);
     case 'new-thread': return newTab();
+    case 'new-thread-in': newTab({ cwd: actEl.dataset.cwd }); return $('#input').focus();
     case 'toggle-scheduled': state.showScheduled = !state.showScheduled; store.set('showScheduled', state.showScheduled); return render();
     case 'toggle-pr': state.withPr = !state.withPr; return render();
     case 'pr-ctx': return addContext(prCtx(pr()), { cwd: pr().localDir });
@@ -1230,7 +1244,9 @@ const swItems = () => {
   const pool = useHits ? sw.hits.map((h) => h.thread) : state.threads.filter((t) => terms.every((x) => hay(t).includes(x)));
   const threads = pool.filter((t) => !openIds.has(t.id)).slice(0, 30)
     .map((t) => ({ kind: 'thread', id: t.id, title: t.title, sub: `${t.project} · ${ago(t.updatedAt)}${t.prs?.length ? ` · ${t.prs.length} PR` : ''}`, running: t.running }));
-  return [...open, ...threads];
+  const starts = terms.length ? workspaces().main.filter((w) => terms.every((x) => w.name.toLowerCase().includes(x))).slice(0, 5)
+    .map((w) => ({ kind: 'new', cwd: w.dir, title: `＋ Nuevo hilo en ${w.name}`, sub: w.dir })) : [];
+  return [...starts, ...open, ...threads];
 };
 const renderSw = () => {
   const items = swItems();
@@ -1255,6 +1271,7 @@ const acceptSwitcher = async () => {
   closeSwitcher();
   if (!it) return;
   if (it.kind === 'tab') await gotoTab(state.tabs.findIndex((t) => t.key === it.key));
+  else if (it.kind === 'new') newTab({ cwd: it.cwd });
   else await openThread(it.id);
   $('#input').focus();
 };
@@ -1433,10 +1450,19 @@ window.cockpit = {
 
 (async () => {
   render(); renderDock(true);
-  await Promise.all([loadThreads(), loadPrs(false), loadSlack()]);
+  await Promise.all([loadThreads(), loadPrs(false), loadSlack(), loadWorkspaces()]);
   const tab = activeTab();
   if (tab) { await loadTranscript(tab); renderDock(true); }
   if (state.slack.running) pollSlack();
+  // deep links from macOS notifications: #thread=<id> opens the thread, #view=<name> the view
+  const followHash = () => {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (h.get('thread')) openThread(h.get('thread'));
+    else if (h.get('view') && $(`#rail [data-view="${CSS.escape(h.get('view'))}"]`)) setView(h.get('view'));
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  };
+  followHash();
+  window.addEventListener('hashchange', followHash);
   setInterval(loadThreads, 10_000);
   setInterval(() => loadPrs(false), 120_000);
   // server refreshes sources in background; the UI only re-reads its cache

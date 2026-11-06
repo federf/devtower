@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { groupThreadProjects, threadProject } from '../public/thread-projects.js';
+import { groupThreadProjects, isWorktree, startWorkspaces, threadProject, workspaceOf } from '../public/thread-projects.js';
 
 test('groups threads by project directory with counts and activity', () => {
   const groups = groupThreadProjects([
@@ -49,3 +49,17 @@ test('does not mutate source records or input order', () => {
 });
 
 test('empty input produces no project tabs', () => assert.deepEqual(groupThreadProjects([]), []));
+
+test('start workspaces: repos and used folders first, worktrees folded into their repo', () => {
+  const now = 100 * 86_400_000;
+  const repo = '/p/picallex';
+  const wt = (name, at) => ({ cwd: `${repo}/.claude/worktrees/${name}`, mtimeMs: at });
+  const { main, worktrees } = startWorkspaces([
+    { cwd: repo, mtimeMs: now - 50 }, wt('a-1', now - 10), wt('b-2', now - 20), wt('old-3', now - 30 * 86_400_000),
+    { cwd: '/p/cumulus/', mtimeMs: now - 5 },
+  ], ['/p/picallex', '/p/temporal'], { worktrees: 1, now });
+  assert.deepEqual(main.map((w) => [w.name, w.count]), [['cumulus', 1], ['picallex', 4], ['temporal', 0]]);
+  assert.deepEqual(worktrees.map((w) => [w.name, w.parent]), [['a-1', 'picallex']]);
+  assert.equal(workspaceOf(`${repo}/.claude/worktrees/x`), repo);
+  assert.ok(isWorktree(`${repo}/.claude/worktrees/x`) && !isWorktree(repo));
+});

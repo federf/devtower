@@ -23,16 +23,18 @@ const draw = () => {
   if (!open) { panel.hidden = true; return; }
   panel.hidden = false;
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const fallback = n.native === false;
   panel.innerHTML = `<header><b>Notificaciones</b><span class="spacer"></span>
-      ${perm === 'default' ? '<button class="btn sm primary" data-nf="allow" title="Muestra avisos de Brave/Chrome mientras devtower está abierto">Activar avisos</button>' : ''}
+      ${fallback && perm === 'default' ? '<button class="btn sm primary" data-nf="allow" title="Muestra avisos de Brave/Chrome mientras devtower está abierto">Activar avisos</button>' : ''}
       ${n.unread ? '<button class="btn sm ghost" data-nf="read-all">Marcar todo leído</button>' : ''}</header>
+    ${fallback ? '<div class="empty">Avisos de macOS apagados: activá <b>devtower</b> en Ajustes del Sistema → Notificaciones (o compilalo con <code>npm run notifier</code>). Mientras tanto avisa el navegador.</div>' : ''}
     <div class="nlist">${n.events.map((e) => `<button class="nitem ${e.read ? '' : 'unread'} ${e.urgent ? 'urgent' : ''}" data-id="${esc(e.id)}">
       <i>${ICON[e.source] || '•'}</i><span><b>${esc(e.label)}</b> · ${esc(e.title)}<small>${esc(e.body || '')}</small></span><em>${ago(e.at)}</em></button>`).join('')
       || '<div class="empty">Nada nuevo. Te aviso cuando alguien te escriba, comente o haya algo para revisar.</div>'}</div>`;
 };
 
-// browser notifications: shown while a devtower tab is open (the server then skips the native one)
-const canNotify = () => 'Notification' in window && Notification.permission === 'granted';
+// browser notifications: only a fallback while macOS ones are blocked or missing (avoids duplicates)
+const canNotify = () => state.notifications.native === false && 'Notification' in window && Notification.permission === 'granted';
 let known = null; // ids already seen by this tab
 const go = (ev) => {
   markRead([ev.id]);
@@ -52,8 +54,7 @@ const announce = (fresh) => {
 
 const load = async () => {
   try {
-    const perm = 'Notification' in window ? Notification.permission : 'unsupported';
-    state.notifications = await (await api(`/api/notifications?browser=${perm}`)).json();
+    state.notifications = await (await api('/api/notifications')).json();
     const unread = state.notifications.events.filter((e) => !e.read);
     if (known) announce(unread.filter((e) => !known.has(e.id)));
     known = new Set(state.notifications.events.map((e) => e.id));

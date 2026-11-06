@@ -31,9 +31,8 @@ const DAY_MS = 86_400_000;
 const REFRESH_MS = 5 * 60_000;
 // DEVTOWER_KEYCHAIN=0 disables direct APIs (tests): Slack/Jira fall back to Claude
 const clockify = createClockify({ readSecret: process.env.DEVTOWER_KEYCHAIN === '0' ? async () => null : readSecret, ticketPattern: CONFIG.jira.ticketPattern });
-let browserNotifyAt = 0; // last poll from a tab that can show browser notifications
 const notifier = createNotifier({ readJson: (...a) => readJsonFile(...a), writeJson: (...a) => writeJsonFile(...a), prefs: () => CONFIG.notify,
-  browserActive: () => Date.now() - browserNotifyAt < 90_000 });
+  appUrl: `http://localhost:${PORT}` });
 const settings = createSettings({ loadConfig, forget: () => { direct.forget(); clockify.forget(); }, gh: process.env.GH_BIN || 'gh' });
 // config changes need a fresh process: under launchd (autostart) a non-zero exit is relaunched
 const UNDER_LAUNCHD = String(process.env.XPC_SERVICE_NAME || '').startsWith('local.devtower');
@@ -482,6 +481,14 @@ const searchFiles = async (cwd, q) => {
     .filter((f) => terms.every((t) => f.toLowerCase().includes(t)))
     .sort((a, b) => a.length - b.length)
     .slice(0, 20);
+};
+
+// git clones directly under reposDir: offered as places to start a thread even before using them
+const listRepos = async () => {
+  if (!REPOS_DIR) return [];
+  const entries = await fsp.readdir(REPOS_DIR, { withFileTypes: true }).catch(() => []);
+  return entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && fs.existsSync(path.join(REPOS_DIR, e.name, '.git')))
+    .map((e) => path.join(REPOS_DIR, e.name));
 };
 
 const resolveCwd = (cwd) => {
@@ -1328,6 +1335,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, { item: await workItems.save(await readWorkBody(req), workItem[1]) });
     }
     if (req.method === 'GET' && p === '/api/dev/events') return liveReload.connect(req, res);
+    if (req.method === 'GET' && p === '/api/workspaces') return json(res, { repos: await listRepos() });
     if (req.method === 'GET' && p === '/api/threads') {
       const all = await scanThreads(Number(url.searchParams.get('days') ?? 14), 'all');
       return json(res, { threads: all.filter((t) => !t.archived), archivedThreads: all.filter((t) => t.archived) });
@@ -1384,10 +1392,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/deploy-check') return json(res, await deployCheck((await readBody(req)).key));
     if (req.method === 'GET' && p === '/api/health') return json(res, await loadHealth(url.searchParams.get('refresh') === '1'));
-    if (req.method === 'GET' && p === '/api/notifications') {
-      if (url.searchParams.get('browser') === 'granted') browserNotifyAt = Date.now();
-      return json(res, await notifier.list());
-    }
+    if (req.method === 'GET' && p === '/api/notifications') return json(res, await notifier.list());
     if (req.method === 'POST' && p === '/api/notifications/read') {
       const { ids } = await readBody(req);
       await notifier.markRead(ids === 'all' ? 'all' : (Array.isArray(ids) ? ids.map(String).slice(0, 200) : []));

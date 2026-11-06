@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Notifications: detects what changed since the last check (Slack messages, Jira comments,
 // PR reviews/CI, master, Claude threads that finished) and delivers it to the in-app list and,
-// optionally, as a native macOS notification. The first run of each source only records what
+// as a native macOS notification (the browser tab only shows them when native ones can't). The first run of each source only records what
 // already exists, so installing devtower never floods you.
 
 const MAX_EVENTS = 100;
@@ -11,17 +14,36 @@ const CLAUDE_IDLE = 3 * 60_000;      // a thread must be quiet this long to coun
 const TRANSIENT = new Set(['UNKNOWN', 'PENDING', 'EXPECTED', null, undefined]); // GitHub still computing
 const DEFAULT_PREFS = { native: true, slack: true, jira: true, github: true, master: true, claude: true };
 
-// Native notifications only through terminal-notifier (clicking opens the link). osascript is never
-// used: macOS attributes its notifications to Script Editor, which opens when clicked.
-export const nativeAvailable = () => new Promise((resolve) => execFile('/usr/bin/which', ['terminal-notifier'], (err) => resolve(!err)));
-const nativeNotify = (title, body, url) => new Promise((resolve) => {
-  execFile('terminal-notifier', ['-title', title, '-message', body, '-group', 'devtower', ...(url ? ['-open', url] : [])],
-    { timeout: 5_000 }, () => resolve());
-});
+// Native notifications through devtower-notifier, a tiny Swift app built from native/notifier with
+// `npm run notifier` (no packages). It shows up as "devtower" and clicking opens the link.
+// osascript is never used: macOS attributes its notifications to Script Editor, which opens when clicked.
+const NOTIFIER_APP = path.join(path.dirname(fileURLToPath(import.meta.url)), 'build', 'devtower-notifier.app');
+const NOTIFIER_BIN = path.join(NOTIFIER_APP, 'Contents', 'MacOS', 'devtower-notifier');
+const run = (bin, args, timeout = 5_000) => new Promise((resolve) => execFile(bin, args, { timeout }, (err, stdout = '') => resolve({ err, stdout })));
+// built and not blocked in System Settings > Notifications (notDetermined: the first notice asks)
+export const nativeAvailable = async () => {
+  if (!fs.existsSync(NOTIFIER_BIN)) return false;
+  const { err, stdout } = await run(NOTIFIER_BIN, ['status']);
+  return !err && stdout.trim() !== 'denied';
+};
+// launched through LaunchServices (open), otherwise macOS never shows the permission prompt;
+// -g keeps focus where you are. One group per notice so they stack instead of replacing each other.
+const nativeNotify = async (title, body, url, group = 'devtower', sound = false) => {
+  if (!fs.existsSync(NOTIFIER_BIN)) return false;
+  const { err } = await run('/usr/bin/open', ['-g', '-n', '-W', NOTIFIER_APP, '--args', 'notify', '--title', title, '--message', body, '--group', group,
+    ...(url ? ['--url', url] : []), ...(sound ? ['--sound'] : [])], 60_000);
+  return !err && (await nativeAvailable());
+};
 
-export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send = process.platform === 'darwin' ? nativeNotify : async () => {}, browserActive = () => false, now = () => Date.now() }) => {
+export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send = process.platform === 'darwin' ? nativeNotify : async () => false, native = process.platform === 'darwin' ? nativeAvailable : async () => false, appUrl = '', now = () => Date.now() }) => {
   let state = null; // { seen: {...}, events: [...] }
   let queue = Promise.resolve();
+  let nativeOk = null; // null until checked; the browser tab only shows notices when this is false
+  let checkedAt = 0;
+  const checkNative = async () => { checkedAt = now(); return (nativeOk = await native()); };
+  const NATIVE_RECHECK = 60_000; // picks up a permission granted in System Settings
+  // events without their own link (Claude threads) open devtower on the right thread or view
+  const link = (e) => e.url || (appUrl ? `${appUrl}/#${e.thread ? `thread=${encodeURIComponent(e.thread)}` : `view=${e.view || ''}`}` : undefined);
   const load = async () => (state ??= await readJson('notifications.json', { seen: {}, events: [] }));
   const save = () => writeJson('notifications.json', state);
   const on = (source) => ({ ...DEFAULT_PREFS, ...prefs() })[source] !== false;
@@ -34,10 +56,14 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     const added = fresh.filter((e) => !known.has(e.id) && !recent.has(`${e.source}|${e.label}|${e.title}`));
     if (!added.length) return;
     state.events = [...added, ...state.events].slice(0, MAX_EVENTS);
-    if (!on('native') || browserActive()) return;
+    if (!on('native')) return;
+    if (nativeOk === null || (!nativeOk && now() - checkedAt > NATIVE_RECHECK)) await checkNative();
+    if (!nativeOk) return;
     // a burst becomes one native notification
-    if (added.length > 3) await send('devtower', `${added.length} novedades: ${[...new Set(added.map((e) => e.label))].join(', ')}`);
-    else for (const e of added) await send(`devtower · ${e.label}`, `${e.title}${e.body ? ` — ${e.body}` : ''}`, e.url);
+    const results = added.length > 3
+      ? [await send('devtower', `${added.length} novedades: ${[...new Set(added.map((e) => e.label))].join(', ')}`, appUrl || undefined, 'devtower-burst', added.some((e) => e.urgent))]
+      : await Promise.all(added.map((e) => send(`devtower · ${e.label}`, `${e.title}${e.body ? ` — ${e.body}` : ''}`, link(e), e.id, Boolean(e.urgent))));
+    if (results.includes(false)) await checkNative(); // permission revoked or binary removed
   };
 
   // serialize checks so two sources never write the state at the same time
@@ -117,12 +143,15 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     })));
   });
 
-  const list = async () => { await load(); return { events: state.events, unread: state.events.filter((e) => !e.read).length }; };
+  const list = async () => {
+    await load();
+    if (nativeOk === null || now() - checkedAt > NATIVE_RECHECK) await checkNative();
+    return { events: state.events, unread: state.events.filter((e) => !e.read).length, native: on('native') && nativeOk };
+  };
   const markRead = (ids) => run(async () => { state.events.forEach((e) => { if (ids === 'all' || ids.includes(e.id)) e.read = true; }); });
   const test = async () => {
-    if (!(await nativeAvailable())) return { native: false };
-    await send('devtower · prueba', 'Las notificaciones funcionan.');
-    return { native: true };
+    if (!(await checkNative())) return { native: false };
+    return { native: (await send('devtower · prueba', 'Las notificaciones funcionan.', appUrl || undefined, 'devtower-test', true)) !== false };
   };
 
   return { slack, jira, prs, master, threads, list, markRead, test };

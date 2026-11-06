@@ -8,7 +8,7 @@ const setup = (prefs = {}) => {
   const n = createNotifier({
     readJson: async (name, fallback) => structuredClone(store[name] ?? fallback),
     writeJson: async (name, data) => { store[name] = structuredClone(data); },
-    prefs: () => prefs, send: async (title, body) => { sent.push(`${title} | ${body}`); }, now: () => Date.parse('2026-11-06T15:00:00Z'),
+    prefs: () => prefs, native: async () => true, send: async (title, body) => { sent.push(`${title} | ${body}`); }, now: () => Date.parse('2026-11-06T15:00:00Z'),
   });
   return { n, sent };
 };
@@ -67,20 +67,27 @@ test('a burst from one source becomes a single native notification', async () =>
   assert.equal((await n.list()).unread, 5);
 });
 
-test('no native notification while a devtower tab shows browser notifications', async () => {
+test('native notifications go out whenever allowed; when blocked the list tells the browser tab to show them', async () => {
   const store = {};
   const sent = [];
-  let browser = true;
+  let allowed = false;
+  let clock = Date.parse('2026-11-06T15:00:00Z');
   const n = createNotifier({ readJson: async (k, f) => structuredClone(store[k] ?? f), writeJson: async (k, d) => { store[k] = structuredClone(d); },
-    send: async (t) => { sent.push(t); }, browserActive: () => browser, now: () => Date.parse('2026-11-06T15:00:00Z') });
-  const t0 = Math.floor(Date.parse('2026-11-06T15:00:00Z') / 1000);
+    native: async () => allowed, send: async (t, b, url, group) => { sent.push({ t, url, group }); }, appUrl: 'http://localhost:4317', now: () => clock });
+  const t0 = Math.floor(clock / 1000);
   await n.slack([]);
   await n.slack([msg(t0 + 1)]);
   assert.equal(sent.length, 0);
-  assert.equal((await n.list()).unread, 1, 'still listed for the bell and the tab');
-  browser = false;
+  assert.equal((await n.list()).native, false, 'browser tab falls back');
+  allowed = true;
+  clock += 2 * 60_000; // permission granted later is picked up without a restart
+  assert.equal((await n.list()).native, true);
   await n.slack([msg(t0 + 1), msg(t0 + 2, { author: 'Bea' })]);
-  assert.equal(sent.length, 1);
+  await n.threads([{ id: 'th1', running: false, title: 'x', mtimeMs: clock, prompts: 1 }]);
+  await n.threads([{ id: 'th1', running: false, title: 'x', mtimeMs: clock - 4 * 60_000, prompts: 2 }]);
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[0].group, sent[1].group, 'each notice keeps its own group so they stack');
+  assert.equal(sent[1].url, 'http://localhost:4317/#thread=th1', 'a finished thread opens in devtower');
 });
 
 test('no spam: flapping threads, transient GitHub states and repeats within 6 h stay silent', async () => {

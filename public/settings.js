@@ -95,7 +95,7 @@ const ABOUT = {
     what: 'Te avisa cuando algo espera tu respuesta: mensajes y menciones en Slack, comentarios en tus tareas de Jira, cambios pedidos o CI rojo en tus PRs, reviews pedidas, master roto y hilos de Claude que terminaron.',
     details: ['Revisa cada minuto con consultas livianas. La primera vez solo registra lo existente: no te avisa de lo viejo.',
       'Siempre aparecen en 🔔 (y el número en el título de la pestaña). La notificación de macOS es opcional.',
-      'Con devtower abierto llegan como avisos del navegador (activalos desde 🔔). Con devtower cerrado necesitan <code>brew install terminal-notifier</code>.'],
+      'Llegan como notificaciones de macOS a nombre de devtower (se compila con <code>npm run notifier</code>, sin paquetes). Si macOS las bloquea, avisa el navegador mientras devtower está abierto.'],
   },
   links: { what: 'Atajos a tus herramientas (CI, logs, APM, docs…). Se abren con ⌘K desde cualquier sección.', details: [] },
 };
@@ -222,10 +222,13 @@ document.addEventListener('click', async (e) => {
   try {
     if (act === 'refresh') { S.data = null; S.loading = false; C.render(); return; }
     if (act === 'notify-test') {
+      if ((await getJson('/api/notifications/test', {})).native) { C.toast('Notificación de macOS enviada'); return; }
       if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
-      if ('Notification' in window && Notification.permission === 'granted') new Notification('devtower · prueba', { body: 'Así te van a llegar los avisos mientras devtower está abierto.', icon: '/devtower.svg' });
-      else if (!(await getJson('/api/notifications/test', {})).native) { C.toast('Activá los avisos del navegador (🔔 → Activar avisos) o instalá terminal-notifier'); return; }
-      C.toast('Notificación de prueba enviada'); return;
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('devtower · prueba', { body: 'Así te van a llegar los avisos mientras devtower está abierto.', icon: '/devtower.svg' });
+        C.toast('macOS bloquea devtower: activalo en Ajustes → Notificaciones. Por ahora avisa el navegador'); return;
+      }
+      C.toast('Activá devtower en Ajustes del Sistema → Notificaciones (o npm run notifier)'); return;
     }
     if (act === 'all-repos') { S.allRepos = true; C.render(); return; }
     if (act === 'discard') { S.form = structuredClone(S.data.config); S.dirty = false; C.render(); return; }

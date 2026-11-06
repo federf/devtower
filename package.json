@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
+    "notifier": "node scripts/build-notifier.mjs",
     "start": "node server.js",
     "test": "node --test",
     "up": "node scripts/service.cjs up",

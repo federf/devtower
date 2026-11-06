@@ -10,6 +10,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_DIR, CONFIG_FILE, DEFAULTS } from '../config.js';
 import { readSecret, storeSecret } from '../secrets.js';
+import { buildNotifier } from './build-notifier.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
@@ -156,6 +157,12 @@ fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
 fs.writeFileSync(CONFIG_FILE, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
 fs.chmodSync(CONFIG_FILE, 0o600);
 ok(`Config guardada en ${CONFIG_FILE}`);
+
+if (process.platform === 'darwin') {
+  title('Notificaciones');
+  try { ok(`Notificador nativo compilado: ${buildNotifier()}`); console.log(dim('  La primera notificación pide permiso; si no aparece, Ajustes del Sistema → Notificaciones → devtower.')); }
+  catch (error) { warn(`${error.message}\n    Sin él, avisa el navegador mientras devtower está abierto.`); }
+}
 
 if (process.platform === 'darwin' && await yes('¿Iniciar devtower automáticamente al entrar a la sesión?', true)) {
   try { console.log(execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'service.cjs'), 'autostart', 'on'], { encoding: 'utf8' }).trim()); }
