@@ -262,3 +262,15 @@ body { font-variant-numeric: tabular-nums; }
 .codeblock:hover .copy, .codeblock .copy:focus-visible, .codeblock .copy.done { opacity: 1; }
 .codeblock .copy:hover { color: var(--text); border-color: var(--accent); } .codeblock .copy.done { color: var(--ok); border-color: var(--ok); }
 @media (hover: none) { .codeblock .copy { opacity: 1; } }
+
+/* chat: simple mode groups Claude's steps in one line */
+.seg.mini { padding: 2px; } .seg.mini button { height: 22px; padding: 0 9px; font-size: 11.5px; }
+.stepgroup { margin: 6px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 12.5px; }
+.stepgroup > summary { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; color: var(--muted); list-style: none; }
+.stepgroup > summary::-webkit-details-marker { display: none; }
+.stepgroup > summary span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stepgroup > summary i { font-style: normal; width: 16px; text-align: center; }
+.stepgroup > summary em { font-style: normal; color: var(--bad); font-size: 11.5px; }
+.stepgroup.bad { border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+.stepgroup[open] > summary { border-bottom: 1px solid var(--line); }
+.stepgroup .steps { padding: 6px 8px; }

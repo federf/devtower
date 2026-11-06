@@ -482,6 +482,33 @@ const renderMsg = (m, i, tab) => {
   return `<div class="msg assistant">${md(m.text)}${m.streaming ? '<span class="cursor"></span>' : `<button class="cp" data-act="copy-msg" data-i="${i}" title="Copiar">⧉</button>`}</div>`;
 };
 
+// Simple mode: tool calls and thinking between two messages collapse into one expandable line;
+// your messages, Claude's answers, denials and todo lists stay visible. Verbose shows everything.
+state.chatMode = store.get('chatMode', 'simple');
+const isStep = (m) => m.type === 'thinking' || (m.type === 'tool' && !(m.rawName === 'TodoWrite' || m.rawName?.endsWith('update_plan')));
+const stepGroup = (steps, tab, last) => {
+  const tools = steps.filter(({ m }) => m.type === 'tool');
+  const counts = {};
+  tools.forEach(({ m }) => { counts[m.name] = (counts[m.name] || 0) + 1; });
+  const names = Object.entries(counts).slice(0, 5).map(([n, c]) => (c > 1 ? `${esc(n)} ×${c}` : esc(n))).join(' · ');
+  const failed = tools.filter(({ m }) => m.error).length;
+  const key = steps[0].i;
+  const busy = last && tab.running;
+  const current = busy ? [...tools].reverse()[0]?.m : null;
+  return `<details class="stepgroup ${failed ? 'bad' : ''}" data-group="${key}" ${tab.openGroups?.[key] ? 'open' : ''}>
+    <summary><i>${busy ? '⏳' : failed ? '✗' : '⚙'}</i><span>${busy && current ? `${esc(current.name)} ${esc(current.detail || '')}` : `${tools.length || steps.length} ${tools.length === 1 ? 'paso' : 'pasos'}${names ? ` · ${names}` : ''}`}</span>${failed ? `<em>${failed} con error</em>` : ''}</summary>
+    <div class="steps">${steps.map(({ m, i }) => renderMsg(m, i, tab)).join('')}</div></details>`;
+};
+const renderTranscript = (tab) => {
+  if (state.chatMode === 'verbose') return tab.messages.map((m, i) => renderMsg(m, i, tab)).join('');
+  const out = [];
+  let steps = [];
+  const flush = (last = false) => { if (steps.length) out.push(stepGroup(steps, tab, last)); steps = []; };
+  tab.messages.forEach((m, i) => { if (isStep(m)) steps.push({ m, i }); else { flush(); out.push(renderMsg(m, i, tab)); } });
+  flush(true);
+  return out.join('');
+};
+
 const renderActivity = (tab) => {
   const th = tab && findThread(tab.sessionId);
   const box = $('#activity');
@@ -508,6 +535,8 @@ const renderSessionBar = (tab) => {
       <div><b>Comandos/skills:</b> ${i.slashCommands.length}</div></div>` : '';
   el.innerHTML = `<div class="sb"><span title="${i?.model ? 'Modelo informado por Claude Code en la última ejecución' : 'Modelo solicitado; se confirma al iniciar la ejecución'}">${esc(i?.model || tab.model || 'modelo default')}</span>${tab.cost ? `<span>$${tab.cost.toFixed(2)}</span>` : ''}${tab.turns ? `<span>${tab.turns} turnos</span>` : ''}${i ? `<span>${i.tools} tools · MCP ${mcpOk}/${i.mcp.length}</span>` : ''}
     <span class="spacer"></span>
+    <div class="seg mini" role="group" aria-label="Detalle del chat">${[['simple', 'Simple', 'Solo los mensajes; los pasos de Claude agrupados en una línea'], ['verbose', 'Detallado', 'Todas las herramientas, resultados y razonamiento']]
+      .map(([k, l, t]) => `<button class="${state.chatMode === k ? 'on' : ''}" data-act="chat-mode" data-mode="${k}" title="${t}">${l}</button>`).join('')}</div>
     ${tab.sessionId && !findThread(tab.sessionId)?.archived ? '<button class="btn sm ghost" data-act="fork" title="Continuar en una copia del hilo">⑃ Bifurcar</button><button class="btn sm ghost" data-act="copycmd" title="Copiar comando para retomar en terminal">⌘ CLI</button><button class="btn sm ghost" data-act="rename" title="Renombrar">✎</button>' : ''}
     ${tab.sessionId ? threadActionButtons({ ...findThread(tab.sessionId), id: tab.sessionId, running: tab.running || findThread(tab.sessionId)?.running }) : ''}
     ${i ? '<button class="btn sm ghost" data-act="info" title="Info de la sesión">ⓘ</button>' : ''}</div>${info}`;
@@ -543,7 +572,7 @@ const renderDock = (full) => {
   const nearBottom = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 120;
   tr.innerHTML = tab.messages.length === 0
     ? '<div class="welcome"><h3>Hilo nuevo</h3>Escribí abajo. <b>/</b> para comandos y skills, <b>@</b> para archivos, pegá imágenes con ⌘V.</div>'
-    : tab.messages.map((m, i) => renderMsg(m, i, tab)).join('');
+    : renderTranscript(tab);
   if (full || nearBottom) tr.scrollTop = tr.scrollHeight;
   renderTray(tab);
   if (full) {
@@ -566,6 +595,7 @@ const renderDock = (full) => {
 $('#transcript').addEventListener('toggle', (e) => {
   const d = e.target;
   const tab = activeTab();
+  if (tab && d.dataset?.group !== undefined) { tab.openGroups = { ...(tab.openGroups || {}), [d.dataset.group]: d.open }; return; }
   if (tab && d.dataset?.i !== undefined && tab.messages[d.dataset.i]) tab.messages[d.dataset.i].open = d.open;
 }, true);
 
@@ -698,6 +728,7 @@ $('#dock').addEventListener('click', async (e) => {
   switch (el.dataset.act) {
     case 'copy-msg': await navigator.clipboard.writeText(tab.messages[i].text); el.textContent = '✓'; break;
     case 'info': state.showInfo = !state.showInfo; renderSessionBar(tab); break;
+    case 'chat-mode': state.chatMode = el.dataset.mode; store.set('chatMode', state.chatMode); renderDock(false); break;
     case 'copycmd': await navigator.clipboard.writeText(`cd '${tab.cwd}' && claude --resume ${tab.sessionId}`); flash('Comando copiado al portapapeles'); break;
     case 'rename': {
       const title = prompt('Nuevo nombre del hilo', tab.title);
