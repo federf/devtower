@@ -269,7 +269,8 @@ const renderStats = () => {
 };
 
 const render = () => {
-  if (document.activeElement?.matches?.('.reply textarea, .settings-view input, .settings-view select')) { state.dirty = true; return; }
+  if (document.activeElement?.matches?.('.reply textarea, .settings-view input, .settings-view select')
+    || document.querySelector('.kcard.dragging')) { state.dirty = true; return; }
   $$('#rail .nav[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === state.view));
   $('#view-title').textContent = { today: 'Hoy', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', 'work-items': 'Trabajos', settings: 'Configuración' }[state.view] || 'devtower';
   syncRangeUi();

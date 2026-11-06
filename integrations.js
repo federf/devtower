@@ -156,7 +156,7 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
 
   const commentJira = (key, text, mentions = []) => jira(`/rest/api/3/issue/${key}/comment`, { method: 'POST', body: { body: toAdf(text, mentions) } });
   const jiraTransitions = async (key) => ((await jira(`/rest/api/3/issue/${key}/transitions`)).transitions || [])
-    .map((t) => ({ id: String(t.id), name: t.name, to: t.to?.name || '', toCategory: t.to?.statusCategory?.key || '' }));
+    .map((t) => ({ id: String(t.id), name: t.name, to: t.to?.name || '', toId: String(t.to?.id || ''), toCategory: t.to?.statusCategory?.key || '' }));
 
   let myself;
   const jiraMe = async () => (myself ??= await jira('/rest/api/3/myself').then((m) => ({ accountId: m.accountId, name: m.displayName })));

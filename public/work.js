@@ -219,7 +219,7 @@ const boardCard = (t, selected) => {
   const j = t.jira;
   const marks = [t.threads.length ? `<span title="${t.threads.length} hilo(s) de Claude">✦ ${t.threads.length}</span>` : '',
     t.prs.length ? `<span title="${t.prs.length} PR(s)">⑂ ${t.prs.length}</span>` : ''].join('');
-  return `<button class="kcard ${selected ? 'on' : ''}" data-act="task-select" data-key="${esc(t.key)}" title="${esc(j.summary)}">
+  return `<button class="kcard ${selected ? 'on' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado">
     <span class="kkey">${esc(t.key)}</span><span class="ksum">${esc(j.summary)}</span>
     <span class="kmeta"><span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}</span></button>`;
 };
@@ -236,7 +236,7 @@ const renderBoard = (tasks, board) => {
     <div class="kanban" style="--cols:${board.columns.length}">${board.columns.map((c, ci) => {
       const list = lane.tasks.filter((t) => inColumn(t) === ci);
       const deployCol = /deploy/i.test(c.name) && list.length;
-      return `<section class="kcol"><header><span>${esc(c.name)}</span>${deployCol ? `<button class="btn sm ghost" data-act="deploy-column" data-keys="${esc(list.map((t) => t.key).join(','))}" title="Verificar con tu script si estas tareas ya están en prod">🚀</button>` : ''}<b>${list.length}</b></header>${list.map((t) => boardCard(t, t.key === state.taskSel)).join('') || '<div class="kempty">—</div>'}</section>`;
+      return `<section class="kcol" data-col="${ci}"><header><span>${esc(c.name)}</span>${deployCol ? `<button class="btn sm ghost" data-act="deploy-column" data-keys="${esc(list.map((t) => t.key).join(','))}" title="Verificar con tu script si estas tareas ya están en prod">🚀</button>` : ''}<b>${list.length}</b></header>${list.map((t) => boardCard(t, t.key === state.taskSel)).join('') || '<div class="kempty">—</div>'}</section>`;
     }).join('')}</div>
     ${hidden.length ? `<p class="note">${hidden.length} ${hidden.length === 1 ? 'tarea' : 'tareas'} en un estado que el tablero no muestra (${esc([...new Set(hidden.map((t) => t.jira.status))].join(', '))}): ${hidden.map((t) => `<a class="lnk" target="_blank" href="${JIRA_BROWSE}/${t.key}">${esc(t.key)}</a>`).join(' · ')}</p>` : ''}`;
 };
