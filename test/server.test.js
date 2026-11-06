@@ -17,7 +17,7 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
   const project = path.join(home, '.claude', 'projects', 'fixture');
   await fs.mkdir(path.join(app, 'public'), { recursive: true });
   await fs.mkdir(project, { recursive: true });
-  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'package.json']) {
+  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'notify.js', 'package.json']) {
     if (name === 'server.js') {
       const original = await fs.readFile(path.join(source, name), 'utf8');
       const guarded = original.replace("import { spawn, execFile } from 'node:child_process';",

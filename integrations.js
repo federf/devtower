@@ -161,6 +161,25 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
   let myself;
   const jiraMe = async () => (myself ??= await jira('/rest/api/3/myself').then((m) => ({ accountId: m.accountId, name: m.displayName })));
   const person = (u) => (u ? { accountId: u.accountId, name: u.displayName } : null);
+  // comments by others on my issues (assigned, reported or watched) updated in the last minutes
+  const recentComments = async (minutes = 10) => {
+    const me = await jiraMe();
+    const data = await jira('/rest/api/3/search/jql', { method: 'POST', body: {
+      jql: `(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= -${Number(minutes)}m ORDER BY updated DESC`,
+      maxResults: 15, fields: ['summary'] } });
+    const out = [];
+    for (const issue of data.issues || []) {
+      const { comments = [] } = await jira(`/rest/api/3/issue/${issue.key}/comment?orderBy=-created&maxResults=5`);
+      for (const c of comments) {
+        if (c.author?.accountId === me.accountId) continue;
+        const mentionsMe = JSON.stringify(c.body || {}).includes(`"id":"${me.accountId}"`);
+        out.push({ id: c.id, key: issue.key, summary: issue.fields?.summary || '', author: c.author?.displayName || '', created: c.created,
+          text: adfText(c.body).trim().slice(0, 300), mentionsMe, url: `${JIRA_SITE}/browse/${issue.key}?focusedCommentId=${c.id}` });
+      }
+    }
+    return out;
+  };
+
   const getIssue = async (key) => {
     const { fields: f } = await jira(`/rest/api/3/issue/${key}?fields=summary,description,labels,reporter,assignee,status,issuetype,priority,parent,comment`);
     return {
@@ -235,6 +254,17 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
     };
   };
 
+  // cheap check for notifications: messages to me / mentioning me newer than `since` (unix seconds)
+  const recentSlack = async (since) => {
+    const uid = await whoami();
+    const day = new Date((since - 86_400) * 1000).toISOString().slice(0, 10);
+    const [toMe, mentions] = await Promise.all([search(`to:<@${uid}> after:${day}`), search(`<@${uid}> after:${day}`)]);
+    const fresh = [...new Map([...toMe, ...mentions].map((m) => [`${m.channel?.id}-${m.ts}`, m])).values()]
+      .filter((m) => Number(m.ts) > since && m.user !== uid && !isBot(m));
+    return Promise.all(fresh.slice(0, 10).map((m) => item(m.channel?.is_im ? 'dm' : 'mention', m, m,
+      m.channel?.is_im ? 'Te escribió por DM' : 'Te mencionó', threadOf(m))));
+  };
+
   const pendingSlack = async () => {
     const uid = await whoami();
     const after = new Date(now() - (LOOKBACK_DAYS + 1) * 86_400_000).toISOString().slice(0, 10);
@@ -286,7 +316,7 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
   return {
     has,
     forget,
-    jira: { search: searchJira, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
-    slack: { pending: pendingSlack, send: sendSlack },
+    jira: { search: searchJira, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
+    slack: { pending: pendingSlack, send: sendSlack, recent: recentSlack },
   };
 };

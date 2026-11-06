@@ -91,6 +91,12 @@ const ABOUT = {
       'Si imprime «Primer tag que incluye el PR: X» y «Tag actual en producción: Y», se muestran.',
       'Los PRs de repos que no están en la lista se marcan como «mergeado» sin verificar.'],
   },
+  notify: {
+    what: 'Te avisa cuando algo espera tu respuesta: mensajes y menciones en Slack, comentarios en tus tareas de Jira, cambios pedidos o CI rojo en tus PRs, reviews pedidas, master roto y hilos de Claude que terminaron.',
+    details: ['Revisa cada minuto con consultas livianas. La primera vez solo registra lo existente: no te avisa de lo viejo.',
+      'Siempre aparecen en 🔔 (y el número en el título de la pestaña). La notificación de macOS es opcional.',
+      'Para que al hacer clic se abra el link, instalá <code>brew install terminal-notifier</code>; sin eso igual llegan.'],
+  },
   links: { what: 'Atajos a tus herramientas (CI, logs, APM, docs…). Se abren con ⌘K desde cualquier sección.', details: [] },
 };
 const about = (key) => {
@@ -157,13 +163,18 @@ const renderSettings = () => {
       <button class="btn sm ghost" data-st="link-del" data-i="${i}" title="Quitar">✕</button></div>`).join('')}</div>
     <div class="acts"><button class="btn sm" data-st="link-add">+ Agregar acceso</button></div>`, 'links');
 
+  const NOTIFY = [['slack', 'Slack: DMs, menciones y respuestas'], ['jira', 'Jira: comentarios en tus tareas'], ['github', 'PRs: cambios pedidos, comentarios, CI, reviews'],
+    ['master', 'Master/main en rojo'], ['claude', 'Hilos de Claude que terminaron'], ['native', 'Notificación de macOS (además de 🔔)']];
+  const notify = card('Notificaciones', `<button class="btn sm ghost" data-st="notify-test">Probar</button>`, `
+    <div class="schecks">${NOTIFY.map(([k, l]) => `<label class="cf-check"><input type="checkbox" data-notify-pref="${k}" ${f.notify?.[k] !== false ? 'checked' : ''}> ${l}</label>`).join('')}</div>`, 'notify');
+
   return `<div class="settings-view">
     <div class="sintro"><p>Todo es opcional: vinculá lo que uses y el resto de devtower sigue funcionando. Los datos se leen desde tu máquina con tus propias credenciales; no pasan por ningún servidor de devtower.</p>
       <p class="note">Preferencias en <code>${esc(d.file)}</code> · tokens en el llavero del sistema, nunca en ese archivo.</p></div>
     ${S.msg ? `<div class="banner ${S.msg.err ? 'err' : ''}" role="status">${esc(S.msg.text)}</div>` : ''}
     ${S.busy ? `<div class="banner">${esc(S.busy)}</div>` : ''}
     <h3 class="sect-title">Integraciones</h3><div class="sgrid">${github}${jira}${slack}${clockify}${claude}</div>
-    <h3 class="sect-title">Preferencias</h3><div class="sgrid">${general}${deploy}</div>${links}
+    <h3 class="sect-title">Preferencias</h3><div class="sgrid">${general}${deploy}</div><div class="sgrid">${notify}</div>${links}
     <div class="ssave ${S.dirty ? 'on' : ''}"><span>${S.dirty ? 'Hay cambios sin guardar' : 'Sin cambios'}</span>
       <button class="btn ghost" data-st="discard" ${S.dirty ? '' : 'disabled'}>Descartar</button>
       <button class="btn primary" data-st="save" ${S.dirty && !S.busy ? '' : 'disabled'}>Guardar y aplicar</button></div>
@@ -194,6 +205,7 @@ document.addEventListener('change', (e) => {
     if (t.checked) set.add(t.dataset.repo); else set.delete(t.dataset.repo);
     S.form.github.coreRepos = [...set];
     markDirty(); C.render();
+  } else if (t.dataset.notifyPref) { S.form.notify = { ...(S.form.notify || {}), [t.dataset.notifyPref]: t.checked }; markDirty();
   } else if (t.dataset.path === 'github.org') { S.repos = []; S.form.github.coreRepos = []; markDirty(); loadRepos(t.value); }
 });
 
@@ -209,6 +221,7 @@ document.addEventListener('click', async (e) => {
   S.msg = null;
   try {
     if (act === 'refresh') { S.data = null; S.loading = false; C.render(); return; }
+    if (act === 'notify-test') { await getJson('/api/notifications/test', {}); C.toast('Notificación de prueba enviada'); return; }
     if (act === 'all-repos') { S.allRepos = true; C.render(); return; }
     if (act === 'discard') { S.form = structuredClone(S.data.config); S.dirty = false; C.render(); return; }
     if (act === 'link-add') { S.form.links.push({ name: '', url: '', icon: '↗', group: '' }); markDirty(); C.render(); return; }

@@ -88,6 +88,9 @@ const sanitize = (body, current) => {
       .filter((l) => l.name && /^https?:\/\//.test(l.url));
   }
   if (body.logs) next.logs.hint = str(body.logs.hint, 500);
+  if (body.notify && typeof body.notify === 'object') {
+    for (const k of Object.keys(DEFAULTS.notify)) if (k in body.notify) next.notify[k] = Boolean(body.notify[k]);
+  }
   return next;
 };
 
@@ -102,7 +105,7 @@ const writeRaw = (cfg) => {
 
 export const createSettings = ({ loadConfig, forget, gh = 'gh', fetchImpl = fetch }) => {
   const editable = (c) => ({ user: c.user, reposDir: c.reposDir, github: c.github, jira: { site: c.jira.site, email: c.jira.email, ticketPattern: c.jira.ticketPattern, supportLabels: c.jira.supportLabels },
-    deployCheck: c.deployCheck, links: c.links, logs: c.logs });
+    deployCheck: c.deployCheck, links: c.links, logs: c.logs, notify: c.notify });
 
   const status = async () => {
     const c = loadConfig();

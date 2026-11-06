@@ -13,6 +13,7 @@ import { createIntegrations } from './integrations.js';
 import { loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
 import { createClockify } from './clockify.js';
+import { createNotifier } from './notify.js';
 import { readSecret } from './secrets.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +31,7 @@ const DAY_MS = 86_400_000;
 const REFRESH_MS = 5 * 60_000;
 // DEVTOWER_KEYCHAIN=0 disables direct APIs (tests): Slack/Jira fall back to Claude
 const clockify = createClockify({ readSecret: process.env.DEVTOWER_KEYCHAIN === '0' ? async () => null : readSecret, ticketPattern: CONFIG.jira.ticketPattern });
+const notifier = createNotifier({ readJson: (...a) => readJsonFile(...a), writeJson: (...a) => writeJsonFile(...a), prefs: () => CONFIG.notify });
 const settings = createSettings({ loadConfig, forget: () => { direct.forget(); clockify.forget(); }, gh: process.env.GH_BIN || 'gh' });
 // config changes need a fresh process: under launchd (autostart) a non-zero exit is relaunched
 const UNDER_LAUNCHD = String(process.env.XPC_SERVICE_NAME || '').startsWith('local.devtower');
@@ -719,6 +721,7 @@ const loadPrs = async (force) => {
   const toReview = norm(d.toReview.nodes);
   const reviewed = norm(d.reviewed.nodes).filter((p) => !toReview.some((r) => r.key === p.key));
   prCache = { at: Date.now(), data: { login, fetchedAt: new Date().toISOString(), mine: norm(d.viewer.pullRequests.nodes), toReview, reviewed } };
+  notifier.prs(prCache.data);
   return prCache.data;
 };
 
@@ -780,6 +783,7 @@ const loadHealth = async (force) => {
     oldestOpenDays: open.length ? Math.floor(Math.max(...open.map((p) => Date.now() - Date.parse(p.createdAt))) / DAY_MS) : 0,
   };
   healthCache = { at: Date.now(), data: { fetchedAt: new Date().toISOString(), master, metrics } };
+  notifier.master(master);
   return healthCache.data;
 };
 
@@ -1343,6 +1347,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/deploy-check') return json(res, await deployCheck((await readBody(req)).key));
     if (req.method === 'GET' && p === '/api/health') return json(res, await loadHealth(url.searchParams.get('refresh') === '1'));
+    if (req.method === 'GET' && p === '/api/notifications') return json(res, await notifier.list());
+    if (req.method === 'POST' && p === '/api/notifications/read') {
+      const { ids } = await readBody(req);
+      await notifier.markRead(ids === 'all' ? 'all' : (Array.isArray(ids) ? ids.map(String).slice(0, 200) : []));
+      return json(res, await notifier.list());
+    }
+    if (req.method === 'POST' && p === '/api/notifications/test') { await notifier.test(); return json(res, { ok: true }); }
     if (req.method === 'GET' && p === '/api/clockify') return json(res, await clockify.status());
     if (req.method === 'POST' && p === '/api/clockify/start') {
       const body = await readBody(req);
@@ -1424,7 +1435,19 @@ server.listen(PORT, '127.0.0.1', () => console.log(`cockpit → http://127.0.0.1
 const backgroundRefresh = () => Promise.allSettled([
   refreshJira({ background: true }), refreshSlack({ background: true }), loadPrs(true).then(() => loadHealth(true)),
 ]);
+// Notifications: cheap checks every minute (2 Slack searches, 1 JQL, local thread scan)
+const notifyCheck = async () => {
+  const jobs = [scanThreads(1).then((list) => notifier.threads(list))];
+  if (await direct.has('slack')) jobs.push(direct.slack.recent(Math.floor(Date.now() / 1000) - 15 * 60).then((m) => notifier.slack(m)));
+  if (await direct.has('jira')) jobs.push(direct.jira.recentComments(15).then((c) => notifier.jira(c)));
+  const results = await Promise.allSettled(jobs);
+  results.filter((r) => r.status === 'rejected').forEach((r) => console.error('notify check:', r.reason?.message));
+};
+
 if (process.env.DEVTOWER_BACKGROUND !== '0') {
   setTimeout(backgroundRefresh, 3_000).unref();
   setInterval(backgroundRefresh, REFRESH_MS).unref();
+  setTimeout(notifyCheck, 8_000).unref();
+  setInterval(notifyCheck, 60_000).unref();
+  setInterval(() => loadPrs(true).catch(() => {}), 2 * 60_000).unref();
 }

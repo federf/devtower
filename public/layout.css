@@ -219,3 +219,19 @@ body { font-variant-numeric: tabular-nums; }
 #timer .tmenu .resume span { color: var(--ok); font-weight: 600; }
 #timer .tmhead { padding: 8px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 #topbar #timer { grid-column: 3; grid-row: 1; justify-self: end; margin-right: 0; }
+
+/* notifications */
+#rail #bell { position: relative; } #rail #bell i { position: absolute; top: 2px; right: 0; }
+#notif-panel { position: fixed; top: 54px; right: 16px; z-index: 80; width: min(440px, calc(100vw - 32px)); max-height: 70vh; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); }
+#notif-panel[hidden] { display: none; }
+#notif-panel header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+#notif-panel .spacer { flex: 1; }
+.nlist { overflow: auto; padding: 6px; }
+.nitem { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: start; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: none; text-align: left; cursor: pointer; color: var(--muted); }
+.nitem:hover { background: var(--panel2); }
+.nitem i { font-style: normal; text-align: center; } .nitem em { font-style: normal; font-size: 11px; white-space: nowrap; }
+.nitem span { min-width: 0; font-size: 12.5px; } .nitem b { color: var(--text); font-weight: 600; }
+.nitem small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.nitem.unread { color: var(--text); } .nitem.unread i { color: var(--accent); } .nitem.unread.urgent i { color: var(--bad); }
+.nitem:not(.unread) b { color: var(--muted); font-weight: 500; }
+.schecks { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
