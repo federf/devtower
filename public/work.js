@@ -423,44 +423,6 @@ document.addEventListener('click', async (e) => {
   }
 });
 
-// ------------------------------------------------------------------ usage widget
-
-state.usage = null;
-
-const renderUsage = () => {
-  const u = state.usage;
-  const blockEl = document.getElementById('uw-block-cost');
-  const fillEl = document.getElementById('uw-block-fill');
-  const weekEl = document.getElementById('uw-week-cost');
-  if (!blockEl) return;
-  if (u?.block) {
-    const cost = u.block.cost;
-    blockEl.textContent = `$${cost.toFixed(2)}`;
-    blockEl.classList.toggle('hot', cost > 25);
-    const start = new Date(u.block.startTime).getTime();
-    const end = new Date(u.block.endTime).getTime();
-    const pct = Math.min(100, Math.round(((Date.now() - start) / (end - start)) * 100));
-    if (fillEl) {
-      fillEl.style.width = `${pct}%`;
-      fillEl.className = `uw-fill${pct > 80 ? ' bad' : pct > 50 ? ' warn' : ''}`;
-    }
-  } else {
-    blockEl.textContent = '—';
-    if (fillEl) fillEl.style.width = '0%';
-  }
-  if (weekEl) weekEl.textContent = u?.week ? `$${u.week.cost.toFixed(2)}` : '—';
-};
-
-const loadUsageWidget = async () => {
-  try {
-    state.usage = await (await fetch('/api/usage')).json();
-    renderUsage();
-  } catch { /* ignore */ }
-};
-
-loadUsageWidget();
-setInterval(loadUsageWidget, 90_000);
-
 // ------------------------------------------------------------------ wiring
 
 C.renderers.today = renderToday;

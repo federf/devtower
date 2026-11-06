@@ -29,17 +29,7 @@
 ⌥S  ·  ⌘5"><span>#</span><b>Slack</b><i id="b-slack"></i></button>
       <div class="spacer"></div>
       <button data-view="settings" class="nav" title="Configuración: vincular GitHub, Jira, Slack, Clockify y editar preferencias"><span>⚙</span><b>Config</b></button>
-      <div id="usage-widget">
-        <div class="uw-metric">
-          <span class="uw-label">Bloque</span>
-          <span class="uw-value" id="uw-block-cost">—</span>
-          <div class="uw-bar"><div id="uw-block-fill" class="uw-fill"></div></div>
-        </div>
-        <div class="uw-metric">
-          <span class="uw-label">Semana</span>
-          <span class="uw-value" id="uw-week-cost">—</span>
-        </div>
-      </div>
+      <div id="usage-widget" title="Límites de Claude: tocá para ver el detalle"></div>
       <button id="theme" class="nav" title="Cambiar entre tema claro y oscuro
 ⌘⇧L"><span>☀</span><b>Tema</b></button>
       <button id="toggle-dock" class="nav" title="Mostrar u ocultar el panel de chat
@@ -117,6 +107,7 @@ Esc">■ Detener</button>
   <script src="/board-dnd.js" type="module"></script>
   <script src="/timer.js" type="module"></script>
   <script src="/notifications.js" type="module"></script>
+  <script src="/limits.js" type="module"></script>
   <script src="/live-reload.js" type="module"></script>
 </body>
 </html>

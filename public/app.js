@@ -45,9 +45,21 @@ const ago = (iso) => {
 };
 const match = (...fields) => state.q === '' || fields.join(' ').toLowerCase().includes(state.q.toLowerCase());
 
+// copy buttons on code blocks: copies the text, never the markup
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-copy]');
+  if (!btn) return;
+  e.preventDefault(); e.stopPropagation();
+  let text = btn.parentElement.querySelector('pre')?.textContent || '';
+  if (btn.dataset.strip && text.startsWith(btn.dataset.strip)) text = text.slice(btn.dataset.strip.length);
+  try { await navigator.clipboard.writeText(text); btn.textContent = 'Copiado ✓'; } catch { btn.textContent = 'No se pudo'; }
+  btn.classList.add('done');
+  setTimeout(() => { btn.textContent = 'Copiar'; btn.classList.remove('done'); }, 1500);
+}, true);
+
 const md = (src) => {
   const blocks = [];
-  let t = esc(src).replace(/```(?:\w+)?\n([\s\S]*?)```/g, (_, c) => `\u0000${blocks.push(`<pre><code>${c}</code></pre>`) - 1}\u0000`);
+  let t = esc(src).replace(/```(?:\w+)?\n([\s\S]*?)```/g, (_, c) => `\u0000${blocks.push(`<div class="codeblock"><button class="copy" data-copy title="Copiar al portapapeles">Copiar</button><pre><code>${c}</code></pre></div>`) - 1}\u0000`);
   t = t
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
@@ -447,7 +459,7 @@ const toolBody = (m) => {
   if (m.rawName === 'Edit') body = `<div class="path">${esc(i.file_path)}</div>${diffHtml(i.old_string, i.new_string)}`;
   else if (m.rawName === 'MultiEdit') body = `<div class="path">${esc(i.file_path)}</div>${Array.isArray(i.edits) ? i.edits.map((e) => diffHtml(e.old_string, e.new_string)).join('') : ''}`;
   else if (m.rawName === 'Write') body = `<div class="path">${esc(i.file_path)}</div><pre>${esc(clipLines(i.content, 30))}</pre>`;
-  else if (m.rawName === 'Bash') body = `<pre>$ ${esc(i.command)}</pre>`;
+  else if (m.rawName === 'Bash') body = `<div class="codeblock"><button class="copy" data-copy data-strip="$ " title="Copiar el comando">Copiar</button><pre>$ ${esc(i.command)}</pre></div>`;
   else body = `<pre>${esc(JSON.stringify(i, null, 2))}</pre>`;
   if (m.result) body += `<pre class="res ${m.error ? 'err' : ''}">${esc(m.result)}</pre>`;
   return body;

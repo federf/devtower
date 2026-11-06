@@ -10,7 +10,7 @@ import { describeClaudeFailure, parseClaudeResponse } from './claude-errors.js';
 import { createLiveReload } from './live-reload.js';
 import { createWorkItems } from './work-items.js';
 import { createIntegrations } from './integrations.js';
-import { loadConfig, publicConfig } from './config.js';
+import { CONFIG_DIR, loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
 import { createClockify } from './clockify.js';
 import { createNotifier } from './notify.js';
@@ -1055,8 +1055,42 @@ const runCcusage = (cmd) => new Promise((resolve, reject) => {
   });
 });
 
+// Plan limits come from the statusline JSON that scripts/claude-statusline.mjs saves per session.
+// Each session reports what its last API response said: within a window usage only grows, so the
+// highest value among recent snapshots with the same reset time is the current one.
+const CLAUDE_STATUS_DIR = path.join(CONFIG_DIR, 'claude-status');
+const loadClaudeLimits = async () => {
+  const files = await fsp.readdir(CLAUDE_STATUS_DIR).catch(() => []);
+  const now = Date.now();
+  const snaps = [];
+  for (const f of files.filter((x) => x.endsWith('.json'))) {
+    const file = path.join(CLAUDE_STATUS_DIR, f);
+    const snap = await fsp.readFile(file, 'utf8').then(JSON.parse).catch(() => null);
+    if (!snap) continue;
+    if (now - snap.at > 2 * DAY_MS) { fsp.rm(file, { force: true }).catch(() => {}); continue; }
+    snaps.push(snap);
+  }
+  const windowOf = (key) => {
+    const live = snaps.map((s) => ({ ...s.rateLimits?.[key], at: s.at })).filter((w) => w.resets_at && w.resets_at * 1000 > now);
+    if (!live.length) return null;
+    const latestReset = Math.max(...live.map((w) => w.resets_at));
+    const same = live.filter((w) => w.resets_at === latestReset);
+    return { usedPct: Math.max(...same.map((w) => Number(w.used_percentage) || 0)), resetsAt: new Date(latestReset * 1000).toISOString(),
+      reportedAt: new Date(Math.max(...same.map((w) => w.at))).toISOString() };
+  };
+  const sessions = snaps.filter((s) => now - s.at < 15 * 60_000).sort((a, b) => b.at - a.at).map((s) => ({
+    id: s.session, model: s.model, project: s.cwd ? path.basename(s.cwd) : '', at: new Date(s.at).toISOString(),
+    costUsd: s.cost?.total_cost_usd ?? null, contextPct: s.context?.used_percentage ?? null,
+    linesAdded: s.cost?.total_lines_added ?? null, linesRemoved: s.cost?.total_lines_removed ?? null,
+  }));
+  const newest = snaps.length ? Math.max(...snaps.map((s) => s.at)) : 0;
+  return { fiveHour: windowOf('five_hour'), sevenDay: windowOf('seven_day'), sessions,
+    reportedAt: newest ? new Date(newest).toISOString() : null, stale: !newest || now - newest > 15 * 60_000 };
+};
+
 const loadUsage = async () => {
-  const [blocks, weekly] = await Promise.all([runCcusage('blocks'), runCcusage('weekly')]);
+  const limits = await loadClaudeLimits();
+  const [blocks, weekly] = await Promise.all([runCcusage('blocks'), runCcusage('weekly')]).catch(() => [{ blocks: [] }, { weekly: [] }]);
   const activeBlock = (blocks.blocks || []).find((b) => b.isActive) || null;
   const now = new Date();
   const daysToMonday = now.getDay() === 0 ? 6 : now.getDay() - 1;
@@ -1073,6 +1107,7 @@ const loadUsage = async () => {
       endTime: activeBlock.endTime,
     } : null,
     week: { cost: weekCost, since: mondayStr },
+    limits,
     fetchedAt: new Date().toISOString(),
   };
 };
@@ -1386,6 +1421,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/links') return json(res, { links: await loadLinks() });
     if (req.method === 'GET' && p === '/api/usage') return json(res, await loadUsage());
+    if (req.method === 'GET' && p === '/api/claude-limits') return json(res, await loadClaudeLimits());
     if (req.method === 'GET' && p === '/api/jira') return json(res, await loadJira());
     if (req.method === 'POST' && p === '/api/jira/refresh') {
       refreshJira();
