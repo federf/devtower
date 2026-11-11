@@ -10,6 +10,7 @@ state.jira = { items: [], fetchedAt: null, running: false, error: null };
 state.taskFilter = store.get('taskFilter', 'all');
 state.taskScope = store.get('taskScope', 'sprint');
 state.taskLane = store.get('taskLane', null);
+state.todayAge = store.get('todayAge', 7); // días; 0 = sin límite
 state.taskSel = null;
 state.nextSprint = { loading: false, error: null };
 
@@ -140,8 +141,13 @@ const inbox = () => {
 
 const running = () => state.threads.filter((t) => t.running);
 
+const AGES = [[7, '1 semana'], [30, '1 mes'], [0, 'Todo']];
 const renderToday = () => {
-  const items = inbox();
+  const all = inbox();
+  const cutoff = state.todayAge ? Date.now() - state.todayAge * 86_400_000 : 0;
+  const items = all.filter((i) => !cutoff || !i.at || new Date(i.at).getTime() >= cutoff);
+  const hidden = all.length - items.length;
+  const ageSeg = `<div class="age-filter"><span>Mostrar actividad de</span><div class="seg">${AGES.map(([d, label]) => `<button data-act="today-age" data-d="${d}" class="${state.todayAge === d ? 'on' : ''}">${label}</button>`).join('')}</div>${hidden ? `<em>${hidden} ${hidden === 1 ? 'oculto' : 'ocultos'} por antigüedad</em>` : ''}</div>`;
   const by = (n) => items.filter((i) => i.sev === n);
   const kpi = (n, label, cls, view) => `<button class="kpi ${cls}" data-go="${view}"><b>${n}</b><span>${label}</span></button>`;
   const hour = new Date().getHours();
@@ -161,6 +167,7 @@ const renderToday = () => {
       ${kpi(buildTasks().filter((t) => t.jira?.statusCategory === 'indeterminate').length, 'tareas en curso', '', 'tasks')}
     </div>
     <div class="sources">${sourceBtn('prs', 'PRs', state.prs?.fetchedAt, false)}${sourceBtn('slack', 'Slack', state.slack.fetchedAt, state.slack.running)}${sourceBtn('jira', 'Jira', state.jira.fetchedAt, state.jira.running)}</div>
+    ${ageSeg}
     ${live.length ? `${sectionHead('Claude trabajando ahora', live.length)}<div class="list-wide">${live.map((t) => `<div class="card link" data-act="open-thread" data-id="${t.id}"><i class="dot run"></i><span>${esc(t.title)}</span><em>${esc(t.project)}</em></div>`).join('')}</div>` : ''}
     ${section(1, 'Urgente', 'Bloquea tu trabajo o el de otros')}
     ${section(2, 'Para hoy', 'Reviews, menciones y comentarios')}
@@ -364,6 +371,7 @@ document.addEventListener('click', async (e) => {
       if (state.taskScope === 'next' && !state.jira.next && !state.nextSprint.loading) loadNextSprint();
       break;
     case 'next-sprint-refresh': loadNextSprint(); break;
+    case 'today-age': state.todayAge = Number(el.dataset.d); store.set('todayAge', state.todayAge); C.render(); break;
     case 'task-lane': state.taskLane = el.dataset.lane; state.taskSel = null; store.set('taskLane', state.taskLane); C.render(); break;
     case 'task-select': state.taskSel = state.taskSel === el.dataset.key ? null : el.dataset.key; C.render(); break;
     case 'task-continue': { const t = task(); if (t?.threads[0]) { await C.openThread(t.threads[0].id); $('#input').focus(); } break; }
