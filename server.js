@@ -1480,8 +1480,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/slack/dismiss') {
       const { id } = await readBody(req);
+      if (typeof id !== 'string' || !id) return json(res, { error: 'id requerido' }, 400);
       const dismissed = await readJsonFile('dismissed.json', []);
       await writeJsonFile('dismissed.json', [...new Set([...dismissed, id])]);
+      await notifier.markRead([`slack:${id}`]); // también sale de pendientes en 🔔
       return json(res, { ok: true });
     }
     if (req.method === 'GET' && !p.startsWith('/api/')) return await serveStatic(req, res, p);

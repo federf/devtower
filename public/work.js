@@ -125,7 +125,7 @@ const inbox = () => {
     items.push({ sev: 2, icon: '↻', attrs: `data-key="${esc(p.key)}"`, title: esc(p.title), at: p.updatedAt, sub: `<span class="why">Actualizado desde tu review · @${esc(p.author)}</span>${prLink(p)}${age(p.updatedAt)}`, acts: btn('pr-review', 'Volver a revisar', true, 'Claude revisa los cambios nuevos del PR') });
   }
   for (const s of state.slack.items) {
-    items.push({ sev: s.kind === 'mention' ? 2 : 3, icon: '#', attrs: `data-id="${esc(s.id)}"`, title: `${esc(s.channel)} · ${esc(s.author)}`, at: s.ts, sub: `<span class="why">${esc(s.reason || 'Pendiente de respuesta')}</span><span class="clip">${esc(s.text)}</span>${s.ts ? age(s.ts) : ''}`, acts: btn('today-slack-reply', 'Responder', true, 'Redactar con Claude y guardar como borrador en Slack') + btn('slack-ctx', 'Usar en hilo', false, 'Trabajar este mensaje en un hilo de Claude Code') });
+    items.push({ sev: s.kind === 'mention' ? 2 : 3, icon: '#', attrs: `data-id="${esc(s.id)}"`, title: `${esc(s.channel)} · ${esc(s.author)}`, at: s.ts, sub: `<span class="why">${esc(s.reason || 'Pendiente de respuesta')}</span><span class="clip">${esc(s.text)}</span>${s.ts ? age(s.ts) : ''}`, acts: btn('today-slack-reply', 'Responder', true, 'Redactar con Claude y guardar como borrador en Slack') + btn('slack-ctx', 'Usar en hilo', false, 'Trabajar este mensaje en un hilo de Claude Code') + `<button class="btn sm ghost" data-act="slack-dismiss" title="Ya lo respondiste o no hace falta: lo saca de pendientes. No modifica nada en Slack">Descartar</button>` });
   }
   const tasks = buildTasks();
   for (const t of tasks.filter((x) => x.jira?.statusCategory === 'indeterminate')) {
