@@ -10,6 +10,7 @@ state.jira = { items: [], fetchedAt: null, running: false, error: null };
 state.taskFilter = store.get('taskFilter', 'all');
 state.taskScope = store.get('taskScope', 'sprint');
 state.taskLane = store.get('taskLane', null);
+state.taskOrder = store.get('taskOrder', []); // orden manual de tarjetas en el tablero (solo local)
 state.todayAge = store.get('todayAge', 7); // días; 0 = sin límite
 state.taskSel = null;
 state.nextSprint = { loading: false, error: null };
@@ -227,7 +228,7 @@ const boardCard = (t, selected) => {
   const j = t.jira;
   const marks = [t.threads.length ? `<span title="${t.threads.length} hilo(s) de Claude">✦ ${t.threads.length}</span>` : '',
     t.prs.length ? `<span title="${t.prs.length} PR(s)">⑂ ${t.prs.length}</span>` : ''].join('');
-  return `<button class="kcard ${selected ? 'on' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado">
+  return `<button class="kcard ${selected ? 'on' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado, o arriba/abajo para ordenarla">
     <span class="kkey">${esc(t.key)}</span><span class="ksum">${esc(j.summary)}</span>
     <span class="kmeta"><span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
 };
@@ -242,7 +243,8 @@ const renderBoard = (tasks, board) => {
   return `<div class="viewbar lanes"><div class="seg">${lanes.map((l) => `<button class="${l === lane ? 'on' : ''}" data-act="task-lane" data-lane="${esc(l.name)}" title="${esc(l.query || 'Resto de las tareas')}">${esc(l.name)}<b>${l.tasks.length}</b></button>`).join('')}</div></div>
     ${sel ? `<div class="kdetail">${taskCard(sel)}</div>` : ''}
     <div class="kanban" style="--cols:${board.columns.length}">${board.columns.map((c, ci) => {
-      const list = lane.tasks.filter((t) => inColumn(t) === ci);
+      const rank = (t) => { const i = state.taskOrder.indexOf(t.key); return i === -1 ? Infinity : i; };
+      const list = lane.tasks.filter((t) => inColumn(t) === ci).sort((a, b) => rank(a) - rank(b));
       const deployCol = /deploy/i.test(c.name) && list.length;
       return `<section class="kcol" data-col="${ci}"><header><span>${esc(c.name)}</span>${deployCol ? `<button class="btn sm ghost" data-act="deploy-column" data-keys="${esc(list.map((t) => t.key).join(','))}" title="Verificar con tu script si estas tareas ya están en prod">🚀</button>` : ''}<b>${list.length}</b></header>${list.map((t) => boardCard(t, t.key === state.taskSel)).join('') || '<div class="kempty">—</div>'}</section>`;
     }).join('')}</div>

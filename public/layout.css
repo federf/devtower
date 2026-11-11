@@ -187,6 +187,7 @@ body { font-variant-numeric: tabular-nums; }
 /* board drag & drop */
 .kcard[draggable="true"] { cursor: grab; } .kcard.dragging { opacity: .45; }
 .kcol.drop { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel2)); }
+.kcard.drop-before { box-shadow: 0 -3px 0 var(--accent); } .kcard.drop-after { box-shadow: 0 3px 0 var(--accent); }
 #dnd-choose { position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center; background: rgba(10, 12, 20, .45); }
 #dnd-choose[hidden] { display: none; }
 #dnd-choose .box { display: flex; flex-direction: column; gap: 8px; width: min(380px, 92vw); padding: 18px 20px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }

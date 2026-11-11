@@ -1,5 +1,6 @@
 // Drag a card to another column of the Jira board → apply the transition that leads there,
 // like Jira does. Swimlanes are JQL queries, so (as in Jira) cards cannot be dropped across them.
+// Inside the same column, dragging reorders the cards: a personal order kept in devtower, not Jira's rank.
 // Relies on window.cockpit exposed by app.js; requires the Jira API token.
 const C = window.cockpit;
 const { state, api, esc } = C;
@@ -59,7 +60,23 @@ const drop = async (key, col) => {
   };
 };
 
-const clear = () => document.querySelectorAll('.kcol.drop, .kcard.dragging').forEach((n) => n.classList.remove('drop', 'dragging'));
+const clear = () => document.querySelectorAll('.kcol.drop, .kcard.dragging, .kcard.drop-before, .kcard.drop-after').forEach((n) => n.classList.remove('drop', 'dragging', 'drop-before', 'drop-after'));
+
+// same column: the card under the pointer and whether the dragged one goes above or below it
+const target = (e, col) => {
+  const cards = [...col.querySelectorAll('.kcard[data-key]')].filter((c) => c.dataset.key !== drag.key);
+  const after = cards.find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+  return after ? { card: after, before: true } : cards.length ? { card: cards.at(-1), before: false } : null;
+};
+const reorder = (col, e) => {
+  const keys = [...col.querySelectorAll('.kcard[data-key]')].map((c) => c.dataset.key).filter((k) => k !== drag.key);
+  const t = target(e, col);
+  const at = t ? keys.indexOf(t.card.dataset.key) + (t.before ? 0 : 1) : 0;
+  keys.splice(at, 0, drag.key);
+  state.taskOrder = [...keys, ...state.taskOrder.filter((k) => !keys.includes(k))].slice(0, 500);
+  C.store.set('taskOrder', state.taskOrder);
+  C.render();
+};
 
 document.addEventListener('dragstart', (e) => {
   const card = e.target.closest?.('.kcard[data-key]');
@@ -74,12 +91,19 @@ document.addEventListener('dragover', (e) => {
   if (!col) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
+  if (Number(col.dataset.col) === drag.from) {
+    const t = target(e, col);
+    document.querySelectorAll('.kcard.drop-before, .kcard.drop-after').forEach((n) => n.classList.remove('drop-before', 'drop-after'));
+    t?.card.classList.add(t.before ? 'drop-before' : 'drop-after');
+    return;
+  }
   if (!col.classList.contains('drop')) { clear(); col.classList.add('drop'); document.querySelector(`.kcard[data-key="${CSS.escape(drag.key)}"]`)?.classList.add('dragging'); }
 });
 document.addEventListener('drop', (e) => {
   const col = drag && e.target.closest?.('.kcol[data-col]');
   if (!col) return;
   e.preventDefault();
+  if (Number(col.dataset.col) === drag.from) { reorder(col, e); drag = null; clear(); return; }
   const { key } = drag;
   drag = null;
   clear();
