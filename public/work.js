@@ -101,7 +101,7 @@ const rowHtml = ({ sev, icon, title, sub, tags = '', acts, attrs = '' }) => `
   <div class="card item sev${sev}" ${attrs}>
     <i class="ico">${icon}</i>
     <div class="main"><div class="t"><span>${title}</span></div><div class="m">${sub}${tags}</div></div>
-    <div class="acts">${acts}</div>
+    <div class="acts">${sev > 1 ? acts.replaceAll('btn sm primary', 'btn sm') : acts}</div>
   </div>`;
 
 const btn = (act, label, primary, tip) => `<button class="btn sm ${primary ? 'primary' : ''}" data-act="${act}" title="${esc(tip)}">${label}</button>`;
@@ -149,6 +149,8 @@ const renderToday = () => {
   const cutoff = state.todayAge ? Date.now() - state.todayAge * 86_400_000 : 0;
   const items = all.filter((i) => !cutoff || !i.at || new Date(i.at).getTime() >= cutoff);
   const hidden = all.length - items.length;
+  const reviews = items.filter((i) => i.icon === '👀').length; // contadores: mismo filtro que la lista
+  const slackN = items.filter((i) => i.icon === '#').length;
   const ageSeg = `<div class="age-filter"><span>Mostrar actividad de</span><div class="seg">${AGES.map(([d, label]) => `<button data-act="today-age" data-d="${d}" class="${state.todayAge === d ? 'on' : ''}">${label}</button>`).join('')}</div>${hidden ? `<em>${hidden} ${hidden === 1 ? 'oculto' : 'ocultos'} por antigüedad</em>` : ''}</div>`;
   const by = (n) => items.filter((i) => i.sev === n);
   const kpi = (n, label, cls, view) => `<button class="kpi ${cls}" data-go="${view}"><b>${n}</b><span>${label}</span></button>`;
@@ -164,8 +166,8 @@ const renderToday = () => {
     <div class="hero"><div><h2>${hello}${window.DEVTOWER?.userName ? `, ${esc(window.DEVTOWER.userName)}` : ''}</h2><p>${date} · ${lead}</p></div></div>
     <div class="kpis">
       ${kpi(urgent, 'urgente', urgent ? 'bad' : '', 'prs')}
-      ${kpi((state.prs?.toReview.length || 0), 'para revisar', state.prs?.toReview.length ? 'warn' : '', 'prs')}
-      ${kpi(state.slack.items.length, 'Slack pendientes', state.slack.items.length ? 'warn' : '', 'slack')}
+      ${kpi(reviews, 'para revisar', reviews ? 'warn' : '', 'prs')}
+      ${kpi(slackN, 'Slack pendientes', slackN ? 'warn' : '', 'slack')}
       ${kpi(buildTasks().filter((t) => t.jira?.statusCategory === 'indeterminate').length, 'tareas en curso', '', 'tasks')}
     </div>
     <div class="sources">${sourceBtn('prs', 'PRs', state.prs?.fetchedAt, false)}${sourceBtn('slack', 'Slack', state.slack.fetchedAt, state.slack.running)}${sourceBtn('jira', 'Jira', state.jira.fetchedAt, state.jira.running)}</div>

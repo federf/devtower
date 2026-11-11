@@ -26,6 +26,8 @@ const ORG = CONFIG.github.org;
 const DATA_DIR = path.join(ROOT, 'data');
 const GH = process.env.GH_BIN || 'gh';
 const liveReload = createLiveReload({ directory: path.join(ROOT, 'public'), enabled: process.env.LIVE_RELOAD !== '0' });
+const BOOT_AT = Date.now();
+const SERVICE_LABEL = `local.devtower.${PORT}`;
 const MAX_THREADS = 1500;
 const DAY_MS = 86_400_000;
 const REFRESH_MS = 5 * 60_000;
@@ -500,6 +502,19 @@ const gitBranch = (cwd) =>
       });
     });
   });
+
+// código del servidor modificado después de arrancar → el cliente avisa que hace falta reiniciar
+const serverStatus = async () => {
+  const files = (await fsp.readdir(ROOT)).filter((f) => /\.(c|m)?js$/.test(f));
+  const changed = [];
+  for (const f of files) if ((await fsp.stat(path.join(ROOT, f))).mtimeMs > BOOT_AT) changed.push(f);
+  return { bootAt: new Date(BOOT_AT).toISOString(), stale: changed.length > 0, changed, running: running.size, canRestart: process.env.XPC_SERVICE_NAME === SERVICE_LABEL };
+};
+// bajo launchd: kickstart -k mata este proceso y lo vuelve a levantar
+const restartServer = () => {
+  const uid = process.getuid();
+  spawn('/bin/launchctl', ['kickstart', '-k', `gui/${uid}/${SERVICE_LABEL}`], { detached: true, stdio: 'ignore' }).unref();
+};
 
 // git clones directly under reposDir: offered as places to start a thread even before using them
 const listRepos = async () => {
@@ -1382,6 +1397,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/stop') return await handleStop(req, res);
     if (req.method === 'GET' && p === '/api/commands') return json(res, { commands: await scanCommands(resolveCwd(url.searchParams.get('cwd'))) });
     if (req.method === 'GET' && p === '/api/git-branch') return json(res, { git: await gitBranch(resolveCwd(url.searchParams.get('cwd'))) });
+    if (req.method === 'GET' && p === '/api/server-status') return json(res, await serverStatus());
+    if (req.method === 'POST' && p === '/api/server-restart') {
+      const st = await serverStatus();
+      if (!st.canRestart) return json(res, { error: 'devtower no corre como servicio: reiniciá con npm run down && npm run up' }, 409);
+      json(res, { ok: true });
+      setTimeout(restartServer, 200);
+      return;
+    }
     if (req.method === 'GET' && p === '/api/files') return json(res, { files: await searchFiles(resolveCwd(url.searchParams.get('cwd')), url.searchParams.get('q') || '') });
     if (req.method === 'POST' && p === '/api/rename') {
       const { id, title } = await readBody(req);

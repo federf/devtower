@@ -44,7 +44,11 @@ const ago = (iso) => {
   if (s < 60) return 'ahora';
   if (s < 3600) return `${Math.floor(s / 60)} min`;
   if (s < 86400) return `${Math.floor(s / 3600)} h`;
-  return `${Math.floor(s / 86400)} d`;
+  const d = Math.floor(s / 86400);
+  if (d < 60) return `${d} d`;
+  if (d < 365) return `${Math.floor(d / 30)} meses`;
+  const y = Math.floor(d / 365);
+  return y === 1 ? '1 año' : `${y} años`;
 };
 const match = (...fields) => state.q === '' || fields.join(' ').toLowerCase().includes(state.q.toLowerCase());
 
@@ -307,8 +311,8 @@ const render = () => {
   } else if (state.view === 'board') {
     c.innerHTML = `<div class="board">
       ${panel('threads', 'Hilos recientes', state.threads.length, views.threads(12))}
-      ${panel('mine', 'Mis PRs', prs?.mine.length ?? '…', views.prs('mine', 12))}
-      ${panel('toReview', 'Para revisar', prs?.toReview.length ?? '…', views.prs('toReview', 12))}
+      ${panel('mine', 'Mis PRs', prs ? prsByAge(prs.mine).length : '…', views.prs('mine', 12))}
+      ${panel('toReview', 'Para revisar', prs ? prsByAge(prs.toReview).length : '…', views.prs('toReview', 12))}
       ${panel('slack', 'Slack pendientes', state.slack.items.length, views.slack(12))}
     </div>`;
   } else if (state.view === 'threads') {
@@ -617,7 +621,7 @@ const renderDock = (full) => {
   $('#model').disabled = $('#effort').disabled = false;
   $('#send').disabled = tab.running || Boolean(findThread(tab.sessionId)?.archived);
   $('#stop').hidden = !tab.running;
-  $$('[data-git]').forEach((b) => { b.disabled = $('#send').disabled; });
+  syncGitButtons();
   if (full) loadBranch();
 };
 
@@ -990,7 +994,27 @@ $('#toggle-dock').addEventListener('click', () => { $('#app').classList.toggle('
 $('#send').addEventListener('click', () => send());
 
 // ---- rama git del proyecto del hilo activo
+// habilita cada acción git solo cuando tiene sentido para el estado de la rama
+function syncGitButtons() {
+  const busy = $('#send').disabled;
+  const g = state.git;
+  const onMain = g && /^(main|master)$/.test(g.branch);
+  const why = {
+    branch: '',
+    commit: g && !g.changes ? 'No hay cambios para commitear' : '',
+    pr: onMain ? 'Estás en la rama principal: creá una rama primero' : '',
+  };
+  $$('[data-git]').forEach((b) => {
+    const reason = why[b.dataset.git];
+    b.dataset.tip ??= b.title;
+    b.disabled = busy || Boolean(reason);
+    b.title = reason || b.dataset.tip;
+  });
+  $('[data-git="branch"]')?.classList.toggle('suggest', Boolean(onMain && g.changes));
+}
 const renderBranch = (git) => {
+  state.git = git;
+  syncGitButtons();
   const el = $('#git-branch');
   el.hidden = !git;
   if (!git) return;
@@ -1007,6 +1031,31 @@ const loadBranch = async () => {
   const { git } = await (await api(`/api/git-branch?cwd=${encodeURIComponent(cwd)}`)).json().catch(() => ({}));
   if (activeTab()?.cwd === cwd) renderBranch(git);
 };
+
+// ---- servidor con código nuevo sin aplicar: aviso con botón para reiniciarlo
+const serverNotice = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'server-stale', hidden: true }));
+serverNotice.setAttribute('role', 'status');
+const checkServer = async () => {
+  let st;
+  try { st = await (await api('/api/server-status')).json(); } catch { return; }
+  serverNotice.hidden = !st.stale;
+  if (!st.stale) return;
+  serverNotice.innerHTML = `<span><b>devtower se actualizó.</b> Hay cambios del servidor sin aplicar (${st.changed.map(esc).join(', ')}).</span>
+    ${st.canRestart ? '<button class="btn sm primary" data-srv="restart">Reiniciar servidor</button>' : '<code>npm run down && npm run up</code>'}`;
+  serverNotice.dataset.running = st.running;
+};
+serverNotice.addEventListener('click', async (e) => {
+  if (!e.target.closest('[data-srv="restart"]')) return;
+  const n = Number(serverNotice.dataset.running || 0);
+  if (n && !window.confirm(`Hay ${n} respuesta(s) de Claude en curso: reiniciar las corta. ¿Reiniciar igual?`)) return;
+  serverNotice.innerHTML = '<span>Reiniciando devtower…</span>';
+  try { await api('/api/server-restart', {}); } catch { /* el proceso se corta mientras responde */ }
+  for (let i = 0; i < 30; i += 1) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try { const st = await (await api('/api/server-status')).json(); if (!st.stale) { window.location.reload(); return; } } catch { /* todavía arrancando */ }
+  }
+  serverNotice.innerHTML = '<span>No volvió a arrancar. Probá <code>npm run up</code>.</span>';
+});
 
 // ---- acciones git: delegan en Claude dentro del hilo (respeta las reglas de PR del CLAUDE.md)
 const GIT_PROMPTS = {
@@ -1516,6 +1565,8 @@ window.cockpit = {
   window.addEventListener('hashchange', followHash);
   setInterval(loadThreads, 10_000);
   setInterval(() => { if (!document.hidden) loadBranch(); }, 10_000);
+  checkServer();
+  setInterval(checkServer, 60_000);
   setInterval(() => loadPrs(false), 120_000);
   // server refreshes sources in background; the UI only re-reads its cache
   setInterval(() => { if (!state.slack.running) loadSlack(); window.cockpit.loadJira?.(); }, 60_000);

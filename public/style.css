@@ -145,6 +145,10 @@ mark { background: color-mix(in srgb, var(--warn) 45%, transparent); color: inhe
 #composer .row.ctrls { gap: 6px; flex-wrap: wrap; }
 #composer .row.actions { margin-top: 8px; }
 .git-acts { display: flex; gap: 4px; align-items: center; }
+.git-acts .btn.sm.ghost.suggest { color: var(--bg); background: var(--info); }
+.git-acts .btn:disabled { opacity: .4; }
+#server-stale { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 100; max-width: min(640px, calc(100vw - 32px)); display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--info); border-radius: 12px; box-shadow: var(--shadow); font-size: 12.5px; }
+#server-stale[hidden] { display: none; }
 .git-branch { font-size: 12px; color: var(--muted); padding: 2px 6px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-branch[hidden] { display: none; }
 .git-branch b { color: var(--text); font-weight: 600; }
