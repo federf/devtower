@@ -1168,6 +1168,8 @@ const refreshJira = async ({ background = false } = {}) => {
       const items = await direct.jira.search();
       const board = await sprintBoard(items);
       await writeJsonFile('jira.json', { fetchedAt: new Date().toISOString(), items: await withLanes(items, board), board, next });
+      // si ya se consultó el próximo sprint, se actualiza junto con el resto (si no, quedan reasignaciones viejas)
+      if (next) await loadNextSprint().catch((e) => console.error('próximo sprint:', e.message));
       return;
     }
     const prompt = `${jiraHint('searchJiraIssuesUsingJql')}
