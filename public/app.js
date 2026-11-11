@@ -1373,6 +1373,8 @@ document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const key = e.key.toLowerCase();
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
+  // ⌥E/⌥N/⌥U son teclas muertas de acentos (á, ñ, ü) en macOS: al escribir no son atajos.
+  if (typing && (e.key === 'Dead' || e.isComposing)) return;
   const tab = activeTab();
   if (!helpEl.hidden) { if (e.key === 'Escape') { e.preventDefault(); toggleHelp(false); } return; }
   if (!swEl.hidden) return;
