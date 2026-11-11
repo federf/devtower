@@ -61,7 +61,7 @@ const load = async () => {
   try {
     state.notifications = await (await api('/api/notifications')).json();
     const unread = state.notifications.events.filter((e) => !e.read);
-    if (known) announce(unread.filter((e) => !known.has(e.id)));
+    if (known) announce(unread.filter((e) => !known.has(e.id) && !e.quiet));
     known = new Set(state.notifications.events.map((e) => e.id));
   } catch { /* keep last */ }
   draw();

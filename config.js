@@ -33,7 +33,7 @@ export const DEFAULTS = {
   links: [],            // ⌘K quick access: [{ name, url, icon, group }]
   logs: { hint: '' },
   clockify: { workspaceId: '' }, // filled when the API key is linked
-  notify: { native: true, slack: true, jira: true, github: true, master: true, claude: true },   // how Claude should search production logs (e.g. which skills/MCP to use)
+  notify: { native: true, slack: true, jira: true, github: true, master: true, claude: true, slackNative: false },   // how Claude should search production logs (e.g. which skills/MCP to use)
 };
 
 const merge = (base, extra) => {

@@ -12,7 +12,7 @@ const MAX_EVENTS = 100;
 const REPEAT_WINDOW = 6 * 3_600_000; // the same notice (source + label + title) at most once per window
 const CLAUDE_IDLE = 3 * 60_000;      // a thread must be quiet this long to count as "waiting for you"
 const TRANSIENT = new Set(['UNKNOWN', 'PENDING', 'EXPECTED', null, undefined]); // GitHub still computing
-const DEFAULT_PREFS = { native: true, slack: true, jira: true, github: true, master: true, claude: true };
+const DEFAULT_PREFS = { native: true, slack: true, jira: true, github: true, master: true, claude: true, slackNative: false };
 
 // Native notifications through devtower-notifier, a tiny Swift app built from native/notifier with
 // `npm run notifier` (no packages). It shows up as "devtower" and clicking opens the link.
@@ -50,19 +50,21 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
 
   const emit = async (events) => {
     if (!events.length) return;
-    const fresh = events.map((e) => ({ ...e, id: `${e.source}:${e.key}`, at: e.at || new Date(now()).toISOString(), read: false }));
+    // quiet: solo en 🔔, sin aviso de escritorio (Slack ya avisa por su cuenta)
+    const fresh = events.map((e) => ({ ...e, id: `${e.source}:${e.key}`, at: e.at || new Date(now()).toISOString(), read: false, ...(e.source === 'slack' && !on('slackNative') ? { quiet: true } : {}) }));
     const known = new Set(state.events.map((e) => e.id));
     const recent = new Set(state.events.filter((e) => now() - Date.parse(e.at) < REPEAT_WINDOW).map((e) => `${e.source}|${e.label}|${e.title}`));
     const added = fresh.filter((e) => !known.has(e.id) && !recent.has(`${e.source}|${e.label}|${e.title}`));
     if (!added.length) return;
     state.events = [...added, ...state.events].slice(0, MAX_EVENTS);
-    if (!on('native')) return;
+    const loud = added.filter((e) => !e.quiet);
+    if (!loud.length || !on('native')) return;
     if (nativeOk === null || (!nativeOk && now() - checkedAt > NATIVE_RECHECK)) await checkNative();
     if (!nativeOk) return;
     // a burst becomes one native notification
-    const results = added.length > 3
-      ? [await send('devtower', `${added.length} novedades: ${[...new Set(added.map((e) => e.label))].join(', ')}`, appUrl || undefined, 'devtower-burst', added.some((e) => e.urgent))]
-      : await Promise.all(added.map((e) => send(`devtower · ${e.label}`, `${e.title}${e.body ? ` — ${e.body}` : ''}`, link(e), e.id, Boolean(e.urgent))));
+    const results = loud.length > 3
+      ? [await send('devtower', `${loud.length} novedades: ${[...new Set(loud.map((e) => e.label))].join(', ')}`, appUrl || undefined, 'devtower-burst', loud.some((e) => e.urgent))]
+      : await Promise.all(loud.map((e) => send(`devtower · ${e.label}`, `${e.title}${e.body ? ` — ${e.body}` : ''}`, link(e), e.id, Boolean(e.urgent))));
     if (results.includes(false)) await checkNative(); // permission revoked or binary removed
   };
 

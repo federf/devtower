@@ -8,7 +8,7 @@ const setup = (prefs = {}) => {
   const n = createNotifier({
     readJson: async (name, fallback) => structuredClone(store[name] ?? fallback),
     writeJson: async (name, data) => { store[name] = structuredClone(data); },
-    prefs: () => prefs, native: async () => true, send: async (title, body) => { sent.push(`${title} | ${body}`); }, now: () => Date.parse('2026-11-06T15:00:00Z'),
+    prefs: () => ({ slackNative: true, ...prefs }), native: async () => true, send: async (title, body) => { sent.push(`${title} | ${body}`); }, now: () => Date.parse('2026-11-06T15:00:00Z'),
   });
   return { n, sent };
 };
@@ -73,7 +73,7 @@ test('native notifications go out whenever allowed; when blocked the list tells 
   let allowed = false;
   let clock = Date.parse('2026-11-06T15:00:00Z');
   const n = createNotifier({ readJson: async (k, f) => structuredClone(store[k] ?? f), writeJson: async (k, d) => { store[k] = structuredClone(d); },
-    native: async () => allowed, send: async (t, b, url, group) => { sent.push({ t, url, group }); }, appUrl: 'http://localhost:4317', now: () => clock });
+    prefs: () => ({ slackNative: true }), native: async () => allowed, send: async (t, b, url, group) => { sent.push({ t, url, group }); }, appUrl: 'http://localhost:4317', now: () => clock });
   const t0 = Math.floor(clock / 1000);
   await n.slack([]);
   await n.slack([msg(t0 + 1)]);
@@ -109,4 +109,17 @@ test('no spam: flapping threads, transient GitHub states and repeats within 6 h 
   await n.prs({ mine: [pr({ ci: 'SUCCESS' })], toReview: [] });
   for (const ci of ['PENDING', 'FAILURE', 'PENDING', 'FAILURE']) await n.prs({ mine: [pr({ ci, updatedAt: ci + Math.random() })], toReview: [] });
   assert.deepEqual((await n.list()).events.map((e) => e.label).sort(), ['CI en rojo', 'Claude terminó']);
+});
+
+test('Slack stays out of desktop notifications unless enabled; still listed in 🔔', async () => {
+  const { n, sent } = setup({ slackNative: false });
+  const t0 = Math.floor(Date.parse('2026-11-06T15:00:00Z') / 1000);
+  await n.slack([]);
+  await n.jira([]);
+  await n.slack([msg(t0 + 5)]);
+  await n.jira([{ id: '2', key: 'AB-1', author: 'Bea', text: 'ojo', url: 'u', mentionsMe: true }]);
+  assert.deepEqual(sent, ['devtower · Jira · te mencionaron | AB-1 · Bea — ojo']);
+  const { events, unread } = await n.list();
+  assert.equal(unread, 2);
+  assert.equal(events.find((e) => e.source === 'slack').quiet, true);
 });

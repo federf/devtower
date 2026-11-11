@@ -164,7 +164,7 @@ const renderSettings = () => {
     <div class="acts"><button class="btn sm" data-st="link-add">+ Agregar acceso</button></div>`, 'links');
 
   const NOTIFY = [['slack', 'Slack: DMs, menciones y respuestas'], ['jira', 'Jira: comentarios en tus tareas'], ['github', 'PRs: cambios pedidos, comentarios, CI, reviews'],
-    ['master', 'Master/main en rojo'], ['claude', 'Hilos de Claude que terminaron'], ['native', 'Notificación de macOS (además de 🔔)']];
+    ['master', 'Master/main en rojo'], ['claude', 'Hilos de Claude que terminaron'], ['native', 'Notificación de macOS (además de 🔔)'], ['slackNative', 'Slack también como notificación de macOS (si no, solo en 🔔)']];
   const notify = card('Notificaciones', `<button class="btn sm ghost" data-st="notify-test">Probar</button>`, `
     <div class="schecks">${NOTIFY.map(([k, l]) => `<label class="cf-check"><input type="checkbox" data-notify-pref="${k}" ${f.notify?.[k] !== false ? 'checked' : ''}> ${l}</label>`).join('')}</div>`, 'notify');
 
