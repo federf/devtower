@@ -75,9 +75,21 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
     const seen = state.seen.slack;
     state.seen.slack = Math.max(seen || 0, ...messages.map((m) => Number(m.slackTs) || 0), Math.floor(now() / 1000) - 600);
     if (seen === undefined || !on('slack')) return;
-    await emit(messages.filter((m) => Number(m.slackTs) > seen).map((m) => ({
-      source: 'slack', key: m.id, label: 'Slack', title: `${m.author} · ${m.channel}`, body: m.text.slice(0, 160), url: m.permalink, view: 'slack', urgent: m.kind !== 'dm',
-    })));
+    // una notificación por persona: mientras siga sin leer, los mensajes nuevos se suman a la misma
+    const fresh = [];
+    for (const m of messages.filter((x) => Number(x.slackTs) > seen).sort((x, y) => Number(x.slackTs) - Number(y.slackTs))) {
+      const group = m.author || m.channel;
+      const open = state.events.find((e) => e.source === 'slack' && !e.read && e.group === group) || fresh.find((e) => e.group === group);
+      const body = `${m.author ? `${m.channel}: ` : ''}${m.text.slice(0, 160)}`;
+      if (open) {
+        open.count = (open.count || 1) + 1;
+        Object.assign(open, { label: `Slack · ${open.count} mensajes`, body, url: m.permalink, urgent: open.urgent || m.kind !== 'dm' });
+        if (!fresh.includes(open)) { open.at = new Date(now()).toISOString(); state.events = [open, ...state.events.filter((e) => e !== open)]; }
+        continue;
+      }
+      fresh.push({ source: 'slack', key: m.id, group, count: 1, label: 'Slack', title: m.author || m.channel, body, url: m.permalink, view: 'slack', urgent: m.kind !== 'dm' });
+    }
+    await emit(fresh);
   });
 
   const jira = (comments) => run(async () => {

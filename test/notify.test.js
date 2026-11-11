@@ -23,7 +23,7 @@ test('first run records without notifying; later only new things notify', async 
   assert.equal(sent.length, 0);
   await n.slack([msg(t0 - 100), msg(t0 + 5, { text: 'nuevo' })]);
   await n.jira([{ id: '1', key: 'AB-1', author: 'Ana', text: 'viejo', url: 'u' }, { id: '2', key: 'AB-1', author: 'Bea', text: 'te mencioné', url: 'u', mentionsMe: true }]);
-  assert.deepEqual(sent, ['devtower · Slack | Ana · #dev — nuevo', 'devtower · Jira · te mencionaron | AB-1 · Bea — te mencioné']);
+  assert.deepEqual(sent, ['devtower · Slack | Ana — #dev: nuevo', 'devtower · Jira · te mencionaron | AB-1 · Bea — te mencioné']);
   const { events, unread } = await n.list();
   assert.equal(unread, 2);
   assert.equal(events[0].source, 'jira');
@@ -62,7 +62,7 @@ test('a burst from one source becomes a single native notification', async () =>
   const { n, sent } = setup();
   const t0 = Math.floor(Date.parse('2026-11-06T15:00:00Z') / 1000);
   await n.slack([]);
-  await n.slack([1, 2, 3, 4, 5].map((i) => msg(t0 + i)));
+  await n.slack([1, 2, 3, 4, 5].map((i) => msg(t0 + i, { author: `P${i}` })));
   assert.deepEqual(sent, ['devtower | 5 novedades: Slack']);
   assert.equal((await n.list()).unread, 5);
 });
@@ -122,4 +122,22 @@ test('Slack stays out of desktop notifications unless enabled; still listed in �
   const { events, unread } = await n.list();
   assert.equal(unread, 2);
   assert.equal(events.find((e) => e.source === 'slack').quiet, true);
+});
+
+test('Slack messages from the same person pile up in one unread notification', async () => {
+  const { n } = setup({ slackNative: false });
+  const t0 = Math.floor(Date.parse('2026-11-06T15:00:00Z') / 1000);
+  await n.slack([]);
+  await n.slack([msg(t0 + 1, { text: 'uno' }), msg(t0 + 2, { text: 'dos' })]);
+  await n.slack([msg(t0 + 3, { text: 'tres' }), msg(t0 + 4, { author: 'Bea', text: 'hola' })]);
+  let { events, unread } = await n.list();
+  assert.equal(unread, 2);
+  const ana = events.find((e) => e.title === 'Ana');
+  assert.equal(ana.count, 3);
+  assert.equal(ana.label, 'Slack · 3 mensajes');
+  assert.equal(ana.body, '#dev: tres');
+  await n.markRead([ana.id]);
+  await n.slack([msg(t0 + 5, { text: 'cuatro' })]);
+  ({ events, unread } = await n.list());
+  assert.equal(unread, 2, 'after reading, a new message starts a new notification');
 });
