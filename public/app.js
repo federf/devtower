@@ -21,6 +21,8 @@ const state = {
   prs: null,
   slack: { items: [], fetchedAt: null, running: false, error: null },
   prTab: store.get('prTab', 'mine'),
+  prAge: store.get('prAge', 7), // días; 0 = sin límite
+  prAgeBy: store.get('prAgeBy', 'updatedAt'), // 'updatedAt' (actividad) | 'createdAt'
   projectFilter: store.get('threadProject:active', null),
   withPr: false,
   showScheduled: store.get('showScheduled', false),
@@ -227,6 +229,13 @@ const panel = (id, title, count, body, extra = '') => `
   </div>`;
 const emptyMsg = (m) => `<div class="empty">${m}</div>`;
 
+// PRs por antigüedad: oculta los que no tuvieron actividad (o se crearon) dentro del rango elegido
+const prsByAge = (list) => {
+  if (!state.prAge) return list;
+  const cutoff = Date.now() - state.prAge * 86_400_000;
+  return list.filter((p) => !p[state.prAgeBy] || new Date(p[state.prAgeBy]).getTime() >= cutoff);
+};
+
 const views = {
   threads(limit) {
     const searching = state.q !== '';
@@ -240,8 +249,9 @@ const views = {
   prs(kind, limit) {
     if (state.errors.prs) return `<div class="err">${esc(state.errors.prs)}</div>`;
     if (!state.prs) return emptyMsg('Cargando…');
-    const list = state.prs[kind].filter((p) => match(p.title, p.repo, p.author, p.branch));
-    return (limit ? list.slice(0, limit) : list).map((p) => prCard(p, kind)).join('') || emptyMsg('Nada por acá ✨');
+    const list = prsByAge(state.prs[kind]).filter((p) => match(p.title, p.repo, p.author, p.branch));
+    const hidden = state.prs[kind].length - prsByAge(state.prs[kind]).length;
+    return (limit ? list.slice(0, limit) : list).map((p) => prCard(p, kind)).join('') || emptyMsg(hidden ? `Nada en este rango (${hidden} ${hidden === 1 ? 'PR más viejo oculto' : 'PRs más viejos ocultos'})` : 'Nada por acá ✨');
   },
   slack(limit) {
     const s = state.slack;
@@ -344,8 +354,12 @@ const render = () => {
     <section class="list-wide" role="tabpanel" id="project-thread-panel" aria-labelledby="${selectedId}">${views.threads()}</section>`;
   } else if (state.view === 'prs') {
     const tabs = [['mine', 'Mis PRs'], ['toReview', 'Para revisar'], ['reviewed', 'Ya revisados por mí'], ['health', 'Master y métricas']];
-    c.innerHTML = `<div class="viewbar"><div class="seg">${tabs.map(([k, l]) => `<button class="${state.prTab === k ? 'on' : ''}" data-prtab="${k}">${l}${k === 'health' ? (state.health?.master.some((r) => r.broken) ? '<b class="bad">●</b>' : '') : `<b>${prs?.[k].length ?? '…'}</b>`}</button>`).join('')}</div>
-      <span class="spacer"></span>${(window.cockpit.sourceBtn?.('prs', 'PRs', prs?.fetchedAt, false) ?? '')}</div>
+    const ages = [[7, '1 semana'], [30, '1 mes'], [0, 'Todo']];
+    const hidden = prs && state.prTab !== 'health' ? prs[state.prTab].length - prsByAge(prs[state.prTab]).length : 0;
+    const ageBar = state.prTab === 'health' ? '' : `<div class="seg" title="Qué fecha mirar"><button class="${state.prAgeBy === 'updatedAt' ? 'on' : ''}" data-prageby="updatedAt" title="Última actividad (commits, comentarios, reviews)">Actividad</button><button class="${state.prAgeBy === 'createdAt' ? 'on' : ''}" data-prageby="createdAt" title="Fecha de creación del PR">Creación</button></div>
+      <div class="seg">${ages.map(([d, l]) => `<button class="${state.prAge === d ? 'on' : ''}" data-prage="${d}">${l}</button>`).join('')}</div>${hidden ? `<span class="note">${hidden} ${hidden === 1 ? 'oculto' : 'ocultos'}</span>` : ''}`;
+    c.innerHTML = `<div class="viewbar"><div class="seg">${tabs.map(([k, l]) => `<button class="${state.prTab === k ? 'on' : ''}" data-prtab="${k}">${l}${k === 'health' ? (state.health?.master.some((r) => r.broken) ? '<b class="bad">●</b>' : '') : `<b>${prs ? prsByAge(prs[k]).length : '…'}</b>`}</button>`).join('')}</div>
+      ${ageBar}<span class="spacer"></span>${(window.cockpit.sourceBtn?.('prs', 'PRs', prs?.fetchedAt, false) ?? '')}</div>
       ${state.prTab === 'health' ? (window.cockpit.renderHealth?.() ?? '') : `<div class="list-wide">${views.prs(state.prTab)}</div>`}`;
   } else {
     c.innerHTML = `<div class="viewbar"><span class="note">${state.slack.source === 'api' ? 'DMs, menciones e hilos sin respuesta tuya · últimos 7 días' : 'Lo lee Claude con tu conector de Slack (solo lectura)'}</span>
@@ -896,6 +910,10 @@ document.addEventListener('click', async (e) => {
   }
   const prt = t.closest('[data-prtab]');
   if (prt) { state.prTab = prt.dataset.prtab; store.set('prTab', state.prTab); return render(); }
+  const pra = t.closest('[data-prage]');
+  if (pra) { state.prAge = Number(pra.dataset.prage); store.set('prAge', state.prAge); return render(); }
+  const prb = t.closest('[data-prageby]');
+  if (prb) { state.prAgeBy = prb.dataset.prageby; store.set('prAgeBy', state.prAgeBy); return render(); }
 
   const actEl = t.closest('[data-act]');
   if (!actEl) return;
