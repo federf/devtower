@@ -483,6 +483,24 @@ const searchFiles = async (cwd, q) => {
     .slice(0, 20);
 };
 
+// rama actual + cambios sin commitear + ahead/behind, desde `git status -b`
+const gitBranch = (cwd) =>
+  new Promise((resolve) => {
+    execFile('git', ['status', '--porcelain=v1', '-b'], { cwd, timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      const [head, ...rest] = stdout.split('\n');
+      const m = head.match(/^## (?:No commits yet on )?(.+?)(?:\.\.\.(\S+))?(?: \[(.+)\])?$/) || [];
+      const track = m[3] || '';
+      resolve({
+        branch: m[1]?.startsWith('HEAD (') ? 'HEAD desacoplado' : m[1] || '?',
+        upstream: m[2] || '',
+        ahead: Number(track.match(/ahead (\d+)/)?.[1] || 0),
+        behind: Number(track.match(/behind (\d+)/)?.[1] || 0),
+        changes: rest.filter(Boolean).length,
+      });
+    });
+  });
+
 // git clones directly under reposDir: offered as places to start a thread even before using them
 const listRepos = async () => {
   if (!REPOS_DIR) return [];
@@ -1361,6 +1379,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/run') return await handleRun(req, res);
     if (req.method === 'POST' && p === '/api/stop') return await handleStop(req, res);
     if (req.method === 'GET' && p === '/api/commands') return json(res, { commands: await scanCommands(resolveCwd(url.searchParams.get('cwd'))) });
+    if (req.method === 'GET' && p === '/api/git-branch') return json(res, { git: await gitBranch(resolveCwd(url.searchParams.get('cwd'))) });
     if (req.method === 'GET' && p === '/api/files') return json(res, { files: await searchFiles(resolveCwd(url.searchParams.get('cwd')), url.searchParams.get('q') || '') });
     if (req.method === 'POST' && p === '/api/rename') {
       const { id, title } = await readBody(req);

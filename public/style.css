@@ -144,7 +144,13 @@ mark { background: color-mix(in srgb, var(--warn) 45%, transparent); color: inhe
 
 #composer .row.ctrls { gap: 6px; flex-wrap: wrap; }
 #composer .row.actions { margin-top: 8px; }
-.git-acts { display: flex; gap: 4px; }
+.git-acts { display: flex; gap: 4px; align-items: center; }
+.git-branch { font-size: 12px; color: var(--muted); padding: 2px 6px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-branch[hidden] { display: none; }
+.git-branch b { color: var(--text); font-weight: 600; }
+.git-branch i { font-style: normal; font-variant-numeric: tabular-nums; }
+.git-branch .dirty { color: var(--warn); }
+.git-branch.main b { color: var(--warn); }
 .git-acts .btn.sm.ghost { color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); border-color: color-mix(in srgb, var(--info) 35%, transparent); }
 .git-acts .btn.sm.ghost:hover:not(:disabled) { color: var(--info); background: color-mix(in srgb, var(--info) 22%, transparent); border-color: var(--info); }
 .sel { display: inline-flex; align-items: center; gap: 5px; padding: 0 4px 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font-size: 12px; color: var(--muted); cursor: pointer; }

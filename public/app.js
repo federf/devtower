@@ -604,6 +604,7 @@ const renderDock = (full) => {
   $('#send').disabled = tab.running || Boolean(findThread(tab.sessionId)?.archived);
   $('#stop').hidden = !tab.running;
   $$('[data-git]').forEach((b) => { b.disabled = $('#send').disabled; });
+  if (full) loadBranch();
 };
 
 $('#transcript').addEventListener('toggle', (e) => {
@@ -729,6 +730,7 @@ const send = async (override) => {
   tab.running = false;
   renderDock(false);
   loadThreads();
+  loadBranch();
 };
 
 // ---- dock actions
@@ -968,6 +970,25 @@ const pollSlack = () => {
 };
 $('#toggle-dock').addEventListener('click', () => { $('#app').classList.toggle('no-dock'); $('#app').classList.remove('dock-open'); });
 $('#send').addEventListener('click', () => send());
+
+// ---- rama git del proyecto del hilo activo
+const renderBranch = (git) => {
+  const el = $('#git-branch');
+  el.hidden = !git;
+  if (!git) return;
+  const sync = [git.ahead && `↑${git.ahead}`, git.behind && `↓${git.behind}`].filter(Boolean).join(' ');
+  el.innerHTML = `⎇ <b>${esc(git.branch)}</b>${git.changes ? ` <i class="dirty">●${git.changes}</i>` : ''}${sync ? ` <i>${sync}</i>` : ''}`;
+  el.classList.toggle('main', /^(main|master)$/.test(git.branch));
+  el.title = [`Rama: ${git.branch}`, git.upstream ? `Remoto: ${git.upstream}` : 'Sin rama remota (no pusheada)',
+    git.changes ? `${git.changes} archivo(s) con cambios sin commitear` : 'Sin cambios pendientes',
+    git.ahead ? `${git.ahead} commit(s) sin pushear` : '', git.behind ? `${git.behind} commit(s) atrás del remoto` : ''].filter(Boolean).join('\n');
+};
+const loadBranch = async () => {
+  const cwd = activeTab()?.cwd;
+  if (!cwd) return renderBranch(null);
+  const { git } = await (await api(`/api/git-branch?cwd=${encodeURIComponent(cwd)}`)).json().catch(() => ({}));
+  if (activeTab()?.cwd === cwd) renderBranch(git);
+};
 
 // ---- acciones git: delegan en Claude dentro del hilo (respeta las reglas de PR del CLAUDE.md)
 const GIT_PROMPTS = {
@@ -1476,6 +1497,7 @@ window.cockpit = {
   followHash();
   window.addEventListener('hashchange', followHash);
   setInterval(loadThreads, 10_000);
+  setInterval(() => { if (!document.hidden) loadBranch(); }, 10_000);
   setInterval(() => loadPrs(false), 120_000);
   // server refreshes sources in background; the UI only re-reads its cache
   setInterval(() => { if (!state.slack.running) loadSlack(); window.cockpit.loadJira?.(); }, 60_000);
