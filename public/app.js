@@ -603,6 +603,7 @@ const renderDock = (full) => {
   $('#model').disabled = $('#effort').disabled = false;
   $('#send').disabled = tab.running || Boolean(findThread(tab.sessionId)?.archived);
   $('#stop').hidden = !tab.running;
+  $$('[data-git]').forEach((b) => { b.disabled = $('#send').disabled; });
 };
 
 $('#transcript').addEventListener('toggle', (e) => {
@@ -701,7 +702,8 @@ const send = async (override) => {
   };
   const label = tab.ctx.map((c) => `📎 ${c.label}`).join('  ');
   tab.messages.push({ role: 'user', type: 'text', text: `${label}${label ? '\n' : ''}${text}${tab.images.length ? `\n🖼 ×${tab.images.length}` : ''}` });
-  tab.ctx = []; tab.images = []; tab.draft = ''; $('#input').value = '';
+  tab.ctx = []; tab.images = [];
+  if (typeof override !== 'string') { tab.draft = ''; $('#input').value = ''; }
   if (text !== '') { tab.history = [...(tab.history || []), text]; tab.hIdx = null; }
   tab.running = true;
   if (tab.title === 'Nuevo hilo') tab.title = (text || 'Hilo').slice(0, 40);
@@ -966,6 +968,14 @@ const pollSlack = () => {
 };
 $('#toggle-dock').addEventListener('click', () => { $('#app').classList.toggle('no-dock'); $('#app').classList.remove('dock-open'); });
 $('#send').addEventListener('click', () => send());
+
+// ---- acciones git: delegan en Claude dentro del hilo (respeta las reglas de PR del CLAUDE.md)
+const GIT_PROMPTS = {
+  branch: 'Creá una rama git local nueva para este trabajo y cambiate a ella: nombre corto según la tarea, con el ID de Jira si lo hay. Conservá los cambios sin commitear. No hagas commit ni push.',
+  commit: 'Commiteá los cambios pendientes de este trabajo en commits lógicos con mensajes conventional commit. Si estoy en main/master, avisame antes de commitear. No hagas push.',
+  pr: 'Abrí el PR draft de la rama actual siguiendo mis reglas de creación de PRs (pusheá la rama si falta).',
+};
+$$('[data-git]').forEach((b) => b.addEventListener('click', () => send(GIT_PROMPTS[b.dataset.git])));
 $('#stop').addEventListener('click', () => { const t = activeTab(); if (t?.runKey) api('/api/stop', { key: t.runKey }); });
 $('#input').addEventListener('input', (e) => { const t = activeTab(); if (t) t.draft = e.target.value; });
 $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.isComposing) { e.preventDefault(); send(); } });
