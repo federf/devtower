@@ -6,6 +6,7 @@ const { state, api, esc, ago } = C;
 
 state.notifications = { events: [], unread: 0 };
 let open = false;
+let tab = 'pending'; // 'pending' | 'seen'
 
 const ICON = { slack: '#', jira: '☰', github: '⑂', master: '⛔', claude: '✦' };
 const bell = document.createElement('button');
@@ -24,13 +25,17 @@ const draw = () => {
   panel.hidden = false;
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const fallback = n.native === false;
-  panel.innerHTML = `<header><b>Notificaciones</b><span class="spacer"></span>
+  const list = n.events.filter((e) => (tab === 'pending') === !e.read);
+  panel.innerHTML = `<header><div class="seg">
+        <button data-nf-tab="pending" class="${tab === 'pending' ? 'on' : ''}">Pendientes <b>${n.unread || ''}</b></button>
+        <button data-nf-tab="seen" class="${tab === 'seen' ? 'on' : ''}">Vistas</button></div><span class="spacer"></span>
       ${fallback && perm === 'default' ? '<button class="btn sm primary" data-nf="allow" title="Muestra avisos de Brave/Chrome mientras devtower está abierto">Activar avisos</button>' : ''}
-      ${n.unread ? '<button class="btn sm ghost" data-nf="read-all">Marcar todo leído</button>' : ''}</header>
+      ${n.unread && tab === 'pending' ? '<button class="btn sm ghost" data-nf="read-all">Marcar todo visto</button>' : ''}</header>
     ${fallback ? '<div class="empty">Avisos de macOS apagados: activá <b>devtower</b> en Ajustes del Sistema → Notificaciones (o compilalo con <code>npm run notifier</code>). Mientras tanto avisa el navegador.</div>' : ''}
-    <div class="nlist">${n.events.map((e) => `<button class="nitem ${e.read ? '' : 'unread'} ${e.urgent ? 'urgent' : ''}" data-id="${esc(e.id)}">
-      <i>${ICON[e.source] || '•'}</i><span><b>${esc(e.label)}</b> · ${esc(e.title)}<small>${esc(e.body || '')}</small></span><em>${ago(e.at)}</em></button>`).join('')
-      || '<div class="empty">Nada nuevo. Te aviso cuando alguien te escriba, comente o haya algo para revisar.</div>'}</div>`;
+    <div class="nlist">${list.map((e) => `<div class="nrow"><button class="nitem ${e.read ? '' : 'unread'} ${e.urgent ? 'urgent' : ''}" data-id="${esc(e.id)}">
+      <i>${ICON[e.source] || '•'}</i><span><b>${esc(e.label)}</b> · ${esc(e.title)}<small>${esc(e.body || '')}</small></span><em>${ago(e.at)}</em></button>
+      ${e.read ? '' : `<button class="nread" data-nf-read="${esc(e.id)}" title="Marcar como vista sin abrir">✓</button>`}</div>`).join('')
+      || `<div class="empty">${tab === 'pending' ? 'Nada pendiente. Te aviso cuando alguien te escriba, comente o haya algo para revisar.' : 'Todavía no hay notificaciones vistas.'}</div>`}</div>`;
 };
 
 // browser notifications: only a fallback while macOS ones are blocked or missing (avoids duplicates)
@@ -68,6 +73,11 @@ const markRead = async (ids) => {
 
 bell.addEventListener('click', (e) => { e.stopPropagation(); open = !open; draw(); });
 panel.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const tabBtn = e.target.closest('[data-nf-tab]');
+  if (tabBtn) { tab = tabBtn.dataset.nfTab; draw(); return; }
+  const readBtn = e.target.closest('[data-nf-read]');
+  if (readBtn) { markRead([readBtn.dataset.nfRead]); return; }
   if (e.target.closest('[data-nf="read-all"]')) { markRead('all'); return; }
   if (e.target.closest('[data-nf="allow"]')) { Notification.requestPermission().then(() => { draw(); load(); }); return; }
   const item = e.target.closest('.nitem');

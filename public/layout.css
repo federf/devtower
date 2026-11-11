@@ -234,6 +234,9 @@ body { font-variant-numeric: tabular-nums; }
 .nitem small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .nitem.unread { color: var(--text); } .nitem.unread i { color: var(--accent); } .nitem.unread.urgent i { color: var(--bad); }
 .nitem:not(.unread) b { color: var(--muted); font-weight: 500; }
+.nrow { display: flex; align-items: center; gap: 2px; }
+.nread { flex: none; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; opacity: 0; }
+.nrow:hover .nread, .nread:focus-visible { opacity: 1; } .nread:hover { background: var(--panel2); color: var(--ok); }
 .schecks { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 
 /* Claude plan limits (top bar) */
