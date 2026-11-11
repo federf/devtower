@@ -10,7 +10,8 @@ state.jira = { items: [], fetchedAt: null, running: false, error: null };
 state.taskFilter = store.get('taskFilter', 'all');
 state.taskScope = store.get('taskScope', 'sprint');
 state.taskLane = store.get('taskLane', null);
-state.taskOrder = store.get('taskOrder', []); // orden manual de tarjetas en el tablero (solo local)
+state.taskOrder = store.get('taskOrder', []);
+state.preview = { open: new Set(), data: {} }; // vista previa de tareas: descripción y comentarios de Jira // orden manual de tarjetas en el tablero (solo local)
 state.todayAge = store.get('todayAge', 7); // días; 0 = sin límite
 state.taskSel = null;
 state.nextSprint = { loading: false, error: null };
@@ -179,6 +180,39 @@ const renderToday = () => {
 
 // ------------------------------------------------------------------ Tareas
 
+const loadPreview = async (key) => {
+  const P = state.preview;
+  if (P.data[key]?.loading) return;
+  P.data[key] = { loading: true };
+  C.render();
+  try {
+    const res = await api(`/api/jira/preview?key=${encodeURIComponent(key)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    P.data[key] = { issue: data.issue, at: Date.now() };
+  } catch (e) { P.data[key] = { error: e.message }; }
+  C.render();
+};
+const openPreview = (key) => {
+  state.preview.open.add(key);
+  const d = state.preview.data[key];
+  if (!d || d.error || Date.now() - (d.at || 0) > 5 * 60_000) loadPreview(key);
+};
+const previewHtml = (key) => {
+  if (!state.preview.open.has(key)) return '';
+  const d = state.preview.data[key] || { loading: true };
+  if (d.loading) return '<div class="tpreview"><p class="note">Cargando detalle de Jira…</p></div>';
+  if (d.error) return `<div class="tpreview"><p class="note err">${esc(d.error)}</p><button class="btn sm" data-act="task-preview-reload">Reintentar</button></div>`;
+  const i = d.issue;
+  const meta = [i.reporter?.name && `Reportó ${esc(i.reporter.name)}`, i.assignee?.name && `Asignada a ${esc(i.assignee.name)}`, i.parent && `Padre ${esc(i.parent.key)} · ${esc(i.parent.summary)}`, i.labels.length && `Labels: ${i.labels.map(esc).join(', ')}`].filter(Boolean).join(' · ');
+  return `<div class="tpreview">
+    ${meta ? `<p class="note">${meta}</p>` : ''}
+    <h4>Descripción</h4><div class="tptext">${i.description ? esc(i.description) : '<span class="note">Sin descripción</span>'}</div>
+    <h4>Comentarios <b>${i.comments.length}</b>${i.comments.length >= 20 ? ' <span class="note">(últimos 20)</span>' : ''}</h4>
+    ${i.comments.length ? i.comments.slice().reverse().map((c) => `<div class="tpcomment"><div><b>${esc(c.author)}</b><em>${ago(c.at)}</em></div><div class="tptext">${esc(c.text)}</div></div>`).join('') : '<p class="note">Sin comentarios</p>'}
+  </div>`;
+};
+
 const taskCard = (t) => {
   const j = t.jira;
   const links = [
@@ -198,7 +232,9 @@ const taskCard = (t) => {
       ${btn('task-logs', 'Logs', false, 'Nuevo hilo para investigar logs de producción con las herramientas de logs que tenga Claude, solo lectura')}
       ${j ? C.timerButton?.(t.key) || '' : ''}
       ${j ? btn('task-deploy', '🚀 ¿En prod?', false, 'Busca los PRs de la tarea y sus subtareas y corre tu comando de verificación de deploy en cada uno') : ''}
+      ${j ? btn('task-preview', state.preview.open.has(t.key) ? '▴ Ocultar detalle' : '👁 Detalle', false, 'Ver descripción y comentarios de Jira sin salir de devtower') : ''}
     </div>
+    ${j ? previewHtml(t.key) : ''}
     ${C.deployPanel?.(t.key) || ''}
   </div>`;
 };
@@ -380,7 +416,9 @@ document.addEventListener('click', async (e) => {
     case 'next-sprint-refresh': loadNextSprint(); break;
     case 'today-age': state.todayAge = Number(el.dataset.d); store.set('todayAge', state.todayAge); C.render(); break;
     case 'task-lane': state.taskLane = el.dataset.lane; state.taskSel = null; store.set('taskLane', state.taskLane); C.render(); break;
-    case 'task-select': state.taskSel = state.taskSel === el.dataset.key ? null : el.dataset.key; C.render(); break;
+    case 'task-select': state.taskSel = state.taskSel === el.dataset.key ? null : el.dataset.key; if (state.taskSel) openPreview(state.taskSel); C.render(); break;
+    case 'task-preview': { const k = card?.dataset.task; if (state.preview.open.has(k)) state.preview.open.delete(k); else openPreview(k); C.render(); break; }
+    case 'task-preview-reload': loadPreview(card?.dataset.task); break;
     case 'task-continue': { const t = task(); if (t?.threads[0]) { await C.openThread(t.threads[0].id); $('#input').focus(); } break; }
     case 'task-start': {
       const t = task();

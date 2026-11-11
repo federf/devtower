@@ -180,13 +180,13 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
     return out;
   };
 
-  const getIssue = async (key) => {
+  const getIssue = async (key, { comments = 5 } = {}) => {
     const { fields: f } = await jira(`/rest/api/3/issue/${key}?fields=summary,description,labels,reporter,assignee,status,issuetype,priority,parent,comment`);
     return {
       key, url: `${JIRA_SITE}/browse/${key}`, summary: f.summary || '', status: f.status?.name || '', type: f.issuetype?.name || '',
       priority: f.priority?.name || '', labels: f.labels || [], parent: f.parent ? { key: f.parent.key, summary: f.parent.fields?.summary || '' } : null,
       reporter: person(f.reporter), assignee: person(f.assignee), description: adfText(f.description).trim().slice(0, 4000),
-      comments: (f.comment?.comments || []).slice(-5).map((c) => ({ author: c.author?.displayName || '', at: c.created, text: adfText(c.body).trim().slice(0, 1200) })),
+      comments: (f.comment?.comments || []).slice(-comments).map((c) => ({ author: c.author?.displayName || '', at: c.created, text: adfText(c.body).trim().slice(0, 1200) })),
     };
   };
   const transitionJira = (key, id) => jira(`/rest/api/3/issue/${key}/transitions`, { method: 'POST', body: { transition: { id: String(id) } } });

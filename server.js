@@ -1457,6 +1457,11 @@ const server = http.createServer(async (req, res) => {
       return json(res, { ok: true });
     }
     if (req.method === 'GET' && p === '/api/jira/issue') return json(res, await closeContext(url.searchParams.get('key')));
+    if (req.method === 'GET' && p === '/api/jira/preview') {
+      const key = assertJiraKey(url.searchParams.get('key'));
+      if (!(await direct.has('jira'))) return json(res, { error: 'La vista previa requiere el token de Jira (Config).' }, 503);
+      return json(res, { issue: await direct.jira.issue(key, { comments: 20 }) });
+    }
     if (req.method === 'POST' && p === '/api/jira/draft-close') {
       const { key, notes } = await readBody(req);
       return json(res, { text: await draftCloseComment(key, String(notes || '').slice(0, 4000)) });
