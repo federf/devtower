@@ -268,6 +268,11 @@ const renderTasks = () => {
   const board = scope !== 'all' && jr.board && tasks.some((t) => Number.isInteger(t.jira?.lane)) ? jr.board : null;
   const doneList = done.length ? `${sectionHead('Hechas', done.length)}<div class="done-list">${done.map((t) => `<a target="_blank" href="${JIRA_BROWSE}/${t.key}"><b>${esc(t.key)}</b><span>${esc(t.jira.summary)}</span><em>${esc(t.jira.status)}</em></a>`).join('')}</div>` : '';
   const ns = state.nextSprint;
+  // caché del próximo sprint guardado sin carriles (versión vieja): se recarga una vez para armar el tablero
+  if (scope === 'next' && jr.board && nextItems.length && !nextItems.some((i) => Number.isInteger(i.lane)) && !ns.loading && !ns.relaned) {
+    ns.relaned = true;
+    setTimeout(loadNextSprint);
+  }
   const scopeHead = scope === 'sprint'
     ? (sprintItems.length ? sprintHead(sprintItems[0].sprint, sprintItems) : jr.fetchedAt ? emptyState('🏁', 'Sin sprint activo', 'No tenés tareas en un sprint abierto. Mirá «Todas».') : '')
     : scope === 'next'
