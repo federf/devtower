@@ -376,39 +376,64 @@ const render = () => {
 
 // ------------------------------------------------------------- dock / chat
 
+// same catalog, names and order as the Claude Desktop picker (main + "Más modelos")
 const MODELS = [
-  ['', 'Default · Claude Code', 'Sin forzar modelo: Claude Code lo resuelve según su configuración. No copia la selección de Desktop. El modelo informado aparece en la barra de sesión al iniciar.'],
-  ['opus', 'Opus', 'El más capaz: ideal para tareas complejas, más lento y caro'],
-  ['sonnet', 'Sonnet', 'Equilibrio entre velocidad, costo y calidad'],
-  ['haiku', 'Haiku', 'El más rápido y barato, para tareas simples'],
-  ['claude-fable-5-1', 'Fable 5.1', 'Último modelo de la familia Claude 5'],
+  ['claude-opus-5-5', 'Opus 5.5', 'Para trabajo complejo y tareas del día a día'],
+  ['claude-sonnet-5-5', 'Sonnet 5.5', 'El más eficiente para tareas simples'],
+  ['claude-fable-5-2', 'Fable 5.2', 'Para tus desafíos más difíciles'],
+  ['claude-haiku-5-5', 'Haiku 5.5', 'El más rápido para respuestas rápidas'],
 ];
+const MORE_MODELS = [
+  ['claude-fable-5-1', 'Fable 5.1'], ['claude-opus-5', 'Opus 5'], ['claude-sonnet-5', 'Sonnet 5'], ['claude-fable-5', 'Fable 5'],
+  ['claude-opus-4-8', 'Opus 4.8'], ['claude-opus-4-7', 'Opus 4.7'], ['claude-opus-4-6', 'Opus 4.6'], ['claude-sonnet-4-6', 'Sonnet 4.6'],
+  ['claude-haiku-4-5-20251001', 'Haiku 4.5'], ['claude-opus-4-1-20250805', 'Opus 4.1'],
+];
+const DEFAULT_MODEL = 'claude-opus-5-5';
+// old aliases and the "Claude Code default" option map to the Desktop catalog
+const LEGACY_MODELS = { '': DEFAULT_MODEL, opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-2' };
+const normModel = (m) => LEGACY_MODELS[m ?? ''] ?? m;
 const EFFORTS = [
-  ['', 'Auto · CC decide', 'Deja que Claude Code elija el esfuerzo según el modelo y la tarea'],
-  ['low', 'Bajo', 'Razonamiento mínimo: respuestas rápidas'],
-  ['medium', 'Medio', 'Razonamiento moderado'],
-  ['high', 'Alto', 'Razona más antes de responder'],
-  ['xhigh', 'Muy alto', 'Razonamiento extendido para problemas difíciles'],
-  ['max', 'Máx', 'Máximo esfuerzo: lo más lento y costoso'],
+  ['low', 'Low', 'Respuestas rápidas con razonamiento mínimo'],
+  ['medium', 'Medium', 'Recomendado'],
+  ['high', 'High', 'Razona más antes de responder'],
+  ['xhigh', 'Extra', 'Razonamiento extendido para problemas difíciles'],
+  ['max', 'Max', 'Puede usar muchos tokens: respuestas lentas y riesgo de tocar límites. Solo para lo más difícil'],
 ];
+const DEFAULT_EFFORT = 'medium';
+// models without effort control, or without the "Extra" level (as in Desktop)
+const NO_EFFORT = ['claude-haiku-4-5-20251001', 'claude-opus-4-1-20250805'];
+const NO_XHIGH = ['claude-opus-4-6', 'claude-sonnet-4-6'];
+const effortsFor = (model) => (NO_EFFORT.includes(model) ? [] : EFFORTS.filter(([v]) => v !== 'xhigh' || !NO_XHIGH.includes(model)));
+const normEffort = (e) => (EFFORTS.some(([v]) => v === e) ? e : DEFAULT_EFFORT);
 const MODES = [
-  ['acceptEdits', 'Editar', 'Acepta ediciones de archivos sin preguntar; pide permiso para otros comandos'],
+  ['default', 'Manual', 'Pide permiso para cada acción (aparece una tarjeta para permitir y continuar)'],
+  ['acceptEdits', 'Accept edits', 'Acepta ediciones de archivos sin preguntar; pide permiso para otros comandos'],
   ['plan', 'Plan', 'Solo investiga y propone un plan: no edita ni ejecuta cambios'],
-  ['default', 'Preguntar', 'Pide permiso para cada acción (aparece una tarjeta para permitir y continuar)'],
-  ['bypassPermissions', 'Bypass ⚠', 'Ejecuta todo sin preguntar. Peligroso: usar solo en proyectos de confianza'],
+  ['auto', 'Auto', 'Claude decide qué aprobar solo y pregunta únicamente lo riesgoso'],
+  ['bypassPermissions', 'Bypass permissions', 'Ejecuta todo sin preguntar. Peligroso: usar solo en proyectos de confianza'],
 ];
-const fillSelect = (sel, opts) => { sel.innerHTML = opts.map(([v, l, tip]) => `<option value="${v}" title="${esc(tip || '')}">${l}</option>`).join(''); };
-fillSelect($('#model'), MODELS);
+const DEFAULT_MODE = 'auto';
+const normMode = (m) => (MODES.some(([v]) => v === m) ? m : DEFAULT_MODE);
+// "claude-opus-5-5[1m]" → "Opus 5.5 · 1M"; unknown ids are shown as-is
+const modelName = (id) => {
+  const base = String(id || '').replace(/\[1m\]$/i, '');
+  const name = [...MODELS, ...MORE_MODELS].find(([v]) => v === base)?.[1] || base;
+  return base !== id ? `${name} · 1M` : name;
+};
+const modeName = (m) => MODES.find(([v]) => v === m)?.[1] || m;
+const optionsHtml = (opts) => opts.map(([v, l, tip]) => `<option value="${v}" title="${esc(tip || '')}">${l}</option>`).join('');
+const fillSelect = (sel, opts) => { sel.innerHTML = optionsHtml(opts); };
+$('#model').innerHTML = `${optionsHtml(MODELS)}<optgroup label="Más modelos">${optionsHtml(MORE_MODELS)}</optgroup>`;
 fillSelect($('#effort'), EFFORTS);
 fillSelect($('#mode'), MODES);
 
 const TAB_FIELDS = ['key', 'sessionId', 'cwd', 'title', 'model', 'effort', 'mode', 'allowed', 'deny', 'addDirs', 'appendPrompt', 'maxBudget'];
 const tabDefaults = () => ({
   sessionId: null, cwd: '', title: 'Nuevo hilo', messages: [], ctx: [], images: [], draft: '', running: false, runKey: null,
-  model: '', effort: '', mode: 'acceptEdits', allowed: [], deny: '', addDirs: '', appendPrompt: '', maxBudget: '',
+  model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, mode: DEFAULT_MODE, allowed: [], deny: '', addDirs: '', appendPrompt: '', maxBudget: '',
   cost: 0, turns: 0, info: null, stream: null, fork: false,
 });
-state.tabs = state.tabs.map((t) => ({ ...tabDefaults(), ...t }));
+state.tabs = state.tabs.map((t) => ({ ...tabDefaults(), ...t, model: normModel(t.model), effort: normEffort(t.effort), mode: normMode(t.mode) }));
 if (!state.tabs.some((t) => t.key === state.active)) state.active = state.tabs.at(-1)?.key ?? null;
 state.showInfo = false;
 state.showAdv = false;
@@ -445,7 +470,7 @@ const scheduleRender = () => {
 
 const newTab = (init = {}) => {
   const last = store.get('defaults', {});
-  const tab = { ...tabDefaults(), key: `t${Date.now()}${Math.random().toString(36).slice(2, 5)}`, cwd: init.cwd || knownCwds()[0] || '', model: last.model || '', effort: last.effort || '', mode: last.mode || 'acceptEdits', ...init };
+  const tab = { ...tabDefaults(), key: `t${Date.now()}${Math.random().toString(36).slice(2, 5)}`, cwd: init.cwd || knownCwds()[0] || '', model: normModel(last.model), effort: normEffort(last.effort), mode: normMode(last.mode), ...init };
   state.tabs.push(tab);
   state.active = tab.key;
   persistTabs();
@@ -561,11 +586,11 @@ const renderSessionBar = (tab) => {
   const i = tab.info;
   const mcpOk = i ? i.mcp.filter((s) => s.status === 'connected').length : 0;
   const info = state.showInfo && i ? `<div class="infobox">
-      <div><b>Permisos:</b> ${esc(i.permissionMode || tab.mode)} · <b>Tools:</b> ${i.tools}</div>
+      <div><b>Permisos:</b> ${esc(modeName(i.permissionMode || tab.mode))} · <b>Tools:</b> ${i.tools}</div>
       <div class="m"><b>MCP:</b> ${i.mcp.map((s) => `<span class="tag ${s.status === 'connected' ? 'ok' : s.status === 'needs-auth' ? 'warn' : ''}">${esc(s.name)}</span>`).join(' ')}</div>
       ${i.agents.length ? `<div class="m"><b>Agentes:</b> ${i.agents.map((a) => `<span class="tag">${esc(a)}</span>`).join(' ')}</div>` : ''}
       <div><b>Comandos/skills:</b> ${i.slashCommands.length}</div></div>` : '';
-  el.innerHTML = `<div class="sb"><span title="${i?.model ? 'Modelo informado por Claude Code en la última ejecución' : 'Modelo solicitado; se confirma al iniciar la ejecución'}">${esc(i?.model || tab.model || 'modelo default')}</span>${tab.cost ? `<span>$${tab.cost.toFixed(2)}</span>` : ''}${tab.turns ? `<span>${tab.turns} turnos</span>` : ''}${i ? `<span>${i.tools} tools · MCP ${mcpOk}/${i.mcp.length}</span>` : ''}
+  el.innerHTML = `<div class="sb"><span title="${i?.model ? 'Modelo informado por Claude Code en la última ejecución' : 'Modelo solicitado; se confirma al iniciar la ejecución'}">${esc(modelName(i?.model || tab.model))}</span>${tab.cost ? `<span>$${tab.cost.toFixed(2)}</span>` : ''}${tab.turns ? `<span>${tab.turns} turnos</span>` : ''}${i ? `<span>${i.tools} tools · MCP ${mcpOk}/${i.mcp.length}</span>` : ''}
     <span class="spacer"></span>
     <div class="seg mini" role="group" aria-label="Detalle del chat">${[['simple', 'Simple', 'Solo los mensajes; los pasos de Claude agrupados en una línea'], ['verbose', 'Detallado', 'Todas las herramientas, resultados y razonamiento']]
       .map(([k, l, t]) => `<button class="${state.chatMode === k ? 'on' : ''}" data-act="chat-mode" data-mode="${k}" title="${t}">${l}</button>`).join('')}</div>
@@ -612,13 +637,17 @@ const renderDock = (full) => {
     renderAdv(tab);
   }
   $('#model').value = tab.model;
-  $('#effort').value = tab.effort;
+  const efforts = effortsFor(tab.model);
+  fillSelect($('#effort'), efforts.length ? efforts : [['', '—', 'Este modelo no tiene control de esfuerzo']]);
+  if (efforts.length && !efforts.some(([v]) => v === tab.effort)) tab.effort = DEFAULT_EFFORT;
+  $('#effort').value = efforts.length ? tab.effort : '';
   $('#mode').value = tab.mode;
   const sel = $('#cwd');
   sel.innerHTML = cwdOptions(tab.cwd);
   sel.value = tab.cwd;
   sel.disabled = Boolean(tab.sessionId);
-  $('#model').disabled = $('#effort').disabled = false;
+  $('#model').disabled = false;
+  $('#effort').disabled = efforts.length === 0;
   $('#send').disabled = tab.running || Boolean(findThread(tab.sessionId)?.archived);
   $('#stop').hidden = !tab.running;
   syncGitButtons();
@@ -714,7 +743,7 @@ const send = async (override) => {
   const ctxText = tab.ctx.map((c) => `[Contexto] ${c.text}`).join('\n');
   const prompt = (text.startsWith('/') ? [text, ctxText] : [ctxText, text]).filter(Boolean).join('\n\n');
   const body = {
-    sessionId: tab.sessionId, fork: tab.fork, cwd: tab.cwd, prompt, permissionMode: tab.mode, model: tab.model, effort: tab.effort,
+    sessionId: tab.sessionId, fork: tab.fork, cwd: tab.cwd, prompt, permissionMode: tab.mode, model: tab.model, effort: effortsFor(tab.model).length ? tab.effort : '',
     images: tab.images.map(({ mediaType, data }) => ({ mediaType, data })),
     allowedTools: tab.allowed, disallowedTools: tab.deny.split(',').map((x) => x.trim()).filter(Boolean),
     addDirs: tab.addDirs.split('\n').map((x) => x.trim()).filter(Boolean), appendSystemPrompt: tab.appendPrompt, maxBudget: Number(tab.maxBudget) || 0,
@@ -790,6 +819,8 @@ const bindTabField = (sel, field, transform = (v) => v) => {
   $(sel).addEventListener('change', (e) => { const t = activeTab(); if (t) { t[field] = transform(e.target.value); persistTabs(); renderSessionBar(t); } });
 };
 bindTabField('#model', 'model');
+// the effort levels depend on the model
+$('#model').addEventListener('change', () => renderDock(false));
 bindTabField('#effort', 'effort');
 bindTabField('#mode', 'mode');
 bindTabField('#adv-dirs', 'addDirs');
@@ -1303,7 +1334,7 @@ const cycleTab = async (dir) => {
 };
 const cycleField = (field, list, label) => {
   const tab = activeTab();
-  if (!tab) return;
+  if (!tab || list.length === 0) return;
   const i = list.findIndex(([v]) => v === tab[field]);
   const [v, name] = list[(i + 1) % list.length];
   tab[field] = v;
@@ -1528,7 +1559,7 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey && !mod && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) { e.preventDefault(); stepThread(e.code === 'ArrowDown' ? 1 : -1); return; }
   if (!typing && !mod && !e.altKey && listNav(e)) return;
   if (e.altKey && !mod && e.code === 'KeyP') { e.preventDefault(); cycleField('model', MODELS, 'Modelo'); return; }
-  if (e.altKey && !mod && e.code === 'KeyE') { e.preventDefault(); cycleField('effort', EFFORTS, 'Esfuerzo'); return; }
+  if (e.altKey && !mod && e.code === 'KeyE') { e.preventDefault(); cycleField('effort', effortsFor(activeTab()?.model), 'Esfuerzo'); return; }
   if (e.shiftKey && e.key === 'Tab' && document.activeElement?.id === 'input') { e.preventDefault(); cycleField('mode', MODES, 'Permisos'); return; }
   if (e.key === 'ArrowUp' && document.activeElement?.id === 'input' && !popup.open) { recallHistory(e, -1); return; }
   if (e.key === 'ArrowDown' && document.activeElement?.id === 'input' && !popup.open) { recallHistory(e, 1); return; }

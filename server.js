@@ -557,7 +557,9 @@ const handleRun = async (req, res) => {
   const images = (Array.isArray(body.images) ? body.images : []).filter((i) => IMAGE_TYPES.includes(i.mediaType) && typeof i.data === 'string').slice(0, 6);
   if (prompt === '' && images.length === 0) return json(res, { error: 'prompt vacío' }, 400);
   const cwd = resolveCwd(body.cwd);
-  const mode = ['default', 'acceptEdits', 'plan', 'bypassPermissions'].includes(body.permissionMode) ? body.permissionMode : 'acceptEdits';
+  // the CLI calls Desktop's "Manual" mode `manual`; the UI keeps Desktop's internal `default`
+  const mode = body.permissionMode === 'default' ? 'manual'
+    : ['manual', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'].includes(body.permissionMode) ? body.permissionMode : 'auto';
   if (body.sessionId) await threadLifecycle.assertRunnable(body.sessionId);
   const args = buildRunArgs(body, mode);
 
