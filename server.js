@@ -1101,7 +1101,7 @@ const runCcusage = (cmd) => new Promise((resolve, reject) => {
 
 // Plan limits come from the statusline JSON that scripts/claude-statusline.mjs saves per session.
 // Each session reports what its last API response said: within a window usage only grows, so the
-// highest value among recent snapshots with the same reset time is the current one.
+// newest snapshot wins (a manual/gifted reset lowers usage without changing resets_at, so max() would stick).
 const CLAUDE_STATUS_DIR = path.join(CONFIG_DIR, 'claude-status');
 const loadClaudeLimits = async () => {
   const files = await fsp.readdir(CLAUDE_STATUS_DIR).catch(() => []);
@@ -1119,8 +1119,9 @@ const loadClaudeLimits = async () => {
     if (!live.length) return null;
     const latestReset = Math.max(...live.map((w) => w.resets_at));
     const same = live.filter((w) => w.resets_at === latestReset);
-    return { usedPct: Math.max(...same.map((w) => Number(w.used_percentage) || 0)), resetsAt: new Date(latestReset * 1000).toISOString(),
-      reportedAt: new Date(Math.max(...same.map((w) => w.at))).toISOString() };
+    const newest = same.reduce((a, b) => (b.at > a.at ? b : a));
+    return { usedPct: Number(newest.used_percentage) || 0, resetsAt: new Date(latestReset * 1000).toISOString(),
+      reportedAt: new Date(newest.at).toISOString() };
   };
   const sessions = snaps.filter((s) => now - s.at < 15 * 60_000).sort((a, b) => b.at - a.at).map((s) => ({
     id: s.session, model: s.model, project: s.cwd ? path.basename(s.cwd) : '', at: new Date(s.at).toISOString(),
