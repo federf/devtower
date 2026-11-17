@@ -1,6 +1,6 @@
 :root, :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0e1015; --panel: #151821; --panel2: #1a1e29; --line: #262b38; --text: #e6e9f0; --muted: #8a92a6;
+  --bg: #1a1e29; --panel: #232837; --panel2: #2b3142; --line: #3a4156; --text: #eef0f6; --muted: #a3abbf;
   --accent: #7c8cff; --accent2: #a78bfa; --ok: #3ecf8e; --warn: #f5b94a; --bad: #ff6b7a; --info: #5cc8ff;
   --radius: 12px; --dock: clamp(340px, 34vw, 480px); --shadow: 0 8px 28px rgba(0, 0, 0, .35);
 }
