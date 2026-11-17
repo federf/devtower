@@ -12,7 +12,7 @@ const MAX_EVENTS = 100;
 const REPEAT_WINDOW = 6 * 3_600_000; // the same notice (source + label + title) at most once per window
 const CLAUDE_IDLE = 3 * 60_000;      // a thread must be quiet this long to count as "waiting for you"
 const TRANSIENT = new Set(['UNKNOWN', 'PENDING', 'EXPECTED', null, undefined]); // GitHub still computing
-const DEFAULT_PREFS = { native: true, slack: true, jira: true, github: true, master: true, claude: true, slackNative: false };
+const DEFAULT_PREFS = { native: false, slack: false, jira: false, github: false, master: false, claude: false, slackNative: false };
 
 // Native notifications through devtower-notifier, a tiny Swift app built from native/notifier with
 // `npm run notifier` (no packages). It shows up as "devtower" and clicking opens the link.
@@ -46,7 +46,7 @@ export const createNotifier = ({ readJson, writeJson, prefs = () => ({}), send =
   const link = (e) => e.url || (appUrl ? `${appUrl}/#${e.thread ? `thread=${encodeURIComponent(e.thread)}` : `view=${e.view || ''}`}` : undefined);
   const load = async () => (state ??= await readJson('notifications.json', { seen: {}, events: [] }));
   const save = () => writeJson('notifications.json', state);
-  const on = (source) => ({ ...DEFAULT_PREFS, ...prefs() })[source] !== false;
+  const on = (source) => ({ ...DEFAULT_PREFS, ...prefs() })[source] === true;
 
   const emit = async (events) => {
     if (!events.length) return;

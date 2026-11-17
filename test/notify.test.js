@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createNotifier } from '../notify.js';
 
+const ALL_ON = { native: true, slack: true, jira: true, github: true, master: true, claude: true, slackNative: true };
+
 const setup = (prefs = {}) => {
   const store = {};
   const sent = [];
   const n = createNotifier({
     readJson: async (name, fallback) => structuredClone(store[name] ?? fallback),
     writeJson: async (name, data) => { store[name] = structuredClone(data); },
-    prefs: () => ({ slackNative: true, ...prefs }), native: async () => true, send: async (title, body) => { sent.push(`${title} | ${body}`); }, now: () => Date.parse('2026-11-06T15:00:00Z'),
+    prefs: () => ({ ...ALL_ON, ...prefs }), native: async () => true, send: async (title, body) => { sent.push(`${title} | ${body}`); }, now: () => Date.parse('2026-11-06T15:00:00Z'),
   });
   return { n, sent };
 };
@@ -73,7 +75,7 @@ test('native notifications go out whenever allowed; when blocked the list tells 
   let allowed = false;
   let clock = Date.parse('2026-11-06T15:00:00Z');
   const n = createNotifier({ readJson: async (k, f) => structuredClone(store[k] ?? f), writeJson: async (k, d) => { store[k] = structuredClone(d); },
-    prefs: () => ({ slackNative: true }), native: async () => allowed, send: async (t, b, url, group) => { sent.push({ t, url, group }); }, appUrl: 'http://localhost:4317', now: () => clock });
+    prefs: () => ALL_ON, native: async () => allowed, send: async (t, b, url, group) => { sent.push({ t, url, group }); }, appUrl: 'http://localhost:4317', now: () => clock });
   const t0 = Math.floor(clock / 1000);
   await n.slack([]);
   await n.slack([msg(t0 + 1)]);
@@ -140,4 +142,14 @@ test('Slack messages from the same person pile up in one unread notification', a
   await n.slack([msg(t0 + 5, { text: 'cuatro' })]);
   ({ events, unread } = await n.list());
   assert.equal(unread, 2, 'after reading, a new message starts a new notification');
+});
+
+test('every source is opt-in: with no prefs nothing is recorded or sent', async () => {
+  const store = {}, sent = [];
+  const n = createNotifier({ readJson: async (k, f) => structuredClone(store[k] ?? f), writeJson: async (k, d) => { store[k] = structuredClone(d); },
+    prefs: () => ({}), native: async () => true, send: async (t, b) => { sent.push(b); }, now: () => Date.parse('2026-11-06T15:00:00Z') });
+  await n.slack([msg(1)]);
+  await n.slack([msg(1), msg(2)]);
+  assert.deepEqual(sent, []);
+  assert.deepEqual((await n.list()).events, []);
 });

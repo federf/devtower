@@ -94,7 +94,7 @@ const ABOUT = {
   notify: {
     what: 'Te avisa cuando algo espera tu respuesta: mensajes y menciones en Slack, comentarios en tus tareas de Jira, cambios pedidos o CI rojo en tus PRs, reviews pedidas, master roto y hilos de Claude que terminaron.',
     details: ['Revisa cada minuto con consultas livianas. La primera vez solo registra lo existente: no te avisa de lo viejo.',
-      'Siempre aparecen en 🔔 (y el número en el título de la pestaña). La notificación de macOS es opcional.',
+      'Todo es opt-in: activá abajo las fuentes que quieras. Las activadas aparecen en 🔔 (y el número en el título de la pestaña); la notificación de macOS es opcional.',
       'Llegan como notificaciones de macOS a nombre de devtower (se compila con <code>npm run notifier</code>, sin paquetes). Si macOS las bloquea, avisa el navegador mientras devtower está abierto.'],
   },
   links: { what: 'Atajos a tus herramientas (CI, logs, APM, docs…). Se abren con ⌘K desde cualquier sección.', details: [] },
@@ -166,7 +166,7 @@ const renderSettings = () => {
   const NOTIFY = [['slack', 'Slack: DMs, menciones y respuestas'], ['jira', 'Jira: comentarios en tus tareas'], ['github', 'PRs: cambios pedidos, comentarios, CI, reviews'],
     ['master', 'Master/main en rojo'], ['claude', 'Hilos de Claude que terminaron'], ['native', 'Notificación de macOS (además de 🔔)'], ['slackNative', 'Slack también como notificación de macOS (si no, solo en 🔔)']];
   const notify = card('Notificaciones', `<button class="btn sm ghost" data-st="notify-test">Probar</button>`, `
-    <div class="schecks">${NOTIFY.map(([k, l]) => `<label class="cf-check"><input type="checkbox" data-notify-pref="${k}" ${f.notify?.[k] !== false ? 'checked' : ''}> ${l}</label>`).join('')}</div>`, 'notify');
+    <div class="schecks">${NOTIFY.map(([k, l]) => `<label class="cf-check"><input type="checkbox" data-notify-pref="${k}" ${f.notify?.[k] === true ? 'checked' : ''}> ${l}</label>`).join('')}</div>`, 'notify');
 
   return `<div class="settings-view">
     <div class="sintro"><p>Todo es opcional: vinculá lo que uses y el resto de devtower sigue funcionando. Los datos se leen desde tu máquina con tus propias credenciales; no pasan por ningún servidor de devtower.</p>
