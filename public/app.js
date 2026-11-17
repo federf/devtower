@@ -135,7 +135,7 @@ const prTags = (p) => {
 };
 
 const prCard = (p, kind) => `
-  <div class="card" data-key="${esc(p.key)}">
+  <div class="card fixed-acts" data-key="${esc(p.key)}">
     <div class="t"><span>${esc(p.title)}</span></div>
     <div class="m"><a class="lnk" target="_blank" href="${esc(p.url)}">${esc(p.repo)}#${p.number}</a>
       ${kind !== 'mine' ? `<span>@${esc(p.author)}</span>` : ''}<span>${ago(p.updatedAt)}</span><span>+${p.additions} −${p.deletions} · ${p.files}f</span></div>
@@ -217,7 +217,7 @@ const replyBox = (s) => {
 };
 
 const slackCard = (s) => `
-  <div class="card" data-id="${esc(s.id)}">
+  <div class="card fixed-acts" data-id="${esc(s.id)}">
     <div class="t"><span>${esc(s.channel)} · ${esc(s.author)}</span></div>
     <div class="snip" style="-webkit-line-clamp:4">${esc(s.text)}</div>
     <div class="m"><span class="tag ${s.kind === 'mention' ? 'warn' : 'info'}" title="Tipo de pendiente: mención, mensaje directo o hilo con respuesta nueva">${esc(s.kind)}</span><span>${esc(s.reason || '')}</span><span>${s.ts ? ago(s.ts) : ''}</span>

@@ -39,6 +39,14 @@ body { font-variant-numeric: tabular-nums; }
 .card.task .t span, .card .t span.wrap { -webkit-line-clamp: 2; }
 .card .acts .btn { min-width: 72px; text-align: center; }
 
+/* fixed action column: buttons keep the same spot on every card (quick dismiss) */
+.card.fixed-acts { display: grid; grid-template-columns: minmax(0, 1fr) 148px; column-gap: 14px; align-content: start; }
+.card.fixed-acts > * { grid-column: 1; }
+.card.fixed-acts > .acts { grid-column: 2; grid-row: 1 / span 4; margin: 0; flex-direction: column; flex-wrap: nowrap; align-self: start; }
+.card.fixed-acts > .acts .btn { width: 100%; }
+.card.fixed-acts > .reply { grid-column: 1 / -1; }
+@media (max-width: 760px) { .card.fixed-acts { grid-template-columns: 1fr; } .card.fixed-acts > .acts { grid-column: 1; grid-row: auto; flex-direction: row; flex-wrap: wrap; margin-top: 8px; } .card.fixed-acts > .acts .btn { width: auto; } }
+
 /* status messages share one size so swapping them does not jump */
 .banner { min-height: 40px; }
 
