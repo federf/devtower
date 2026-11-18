@@ -31,6 +31,7 @@ export const DEFAULTS = {
     repos: [],          // owner/repo list the command can verify
   },
   links: [],            // ⌘K quick access: [{ name, url, icon, group }]
+  workweek: { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00', skipOffDays: true }, // normal hours for the metrics (0 = domingo)
   logs: { hint: '' },
   clockify: { workspaceId: '' }, // filled when the API key is linked
   notify: { native: false, slack: false, jira: false, github: false, master: false, claude: false, slackNative: false },   // how Claude should search production logs (e.g. which skills/MCP to use)

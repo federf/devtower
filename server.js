@@ -1139,14 +1139,16 @@ const loadMetrics = async (days) => {
   const inSprint = (t) => t.sprint?.state === 'active' || (sprint && t.due && Date.parse(t.due) >= Date.parse(sprint.start || 0) && Date.parse(t.due) <= Date.parse(sprint.end || 8.64e15) + 86_400_000);
   const sprintWip = sprint ? wipTasks.filter(inSprint) : wipTasks;
   return { ...buildMetrics({ range, entries, prs, prsTotal: prs.total, tasks, ticketPattern: CONFIG.jira.ticketPattern,
-    reviewsGiven: prs.given || [], openPrs: prs.open || [], wipTasks: sprintWip, wipSprint: sprint?.name || '' }), warnings };
+    reviewsGiven: prs.given || [], openPrs: prs.open || [], wipTasks: sprintWip, wipSprint: sprint?.name || '', workweek: loadConfig().workweek }), warnings };
 };
 
 // Weekly history (12 weeks by default): hours, merged PRs and closed tasks over time. Slow, so cached.
 const trendsCache = new Map();
 const loadTrends = async (weeksParam, force = false) => {
   const weeks = weeksFor(weeksParam);
-  const hit = trendsCache.get(weeks.length);
+  const workweek = loadConfig().workweek; // read per call: edited from Config without restarting
+  const cacheKey = `${weeks.length}:${JSON.stringify(workweek)}`;
+  const hit = trendsCache.get(cacheKey);
   if (!force && hit && Date.now() - hit.at < 10 * 60_000) return hit.data;
   const from = weeks[0].from; const to = weeks[weeks.length - 1].to;
   const warnings = [];
@@ -1164,8 +1166,8 @@ const loadTrends = async (weeksParam, force = false) => {
     guard('Clockify', clockify.entriesBetween(from, to)),
   ]);
   if (tasks.length >= 400) warnings.push('Jira: se muestran las últimas 400 tareas cerradas; las semanas más viejas pueden estar incompletas.');
-  const data = { ...buildTrends({ weeks, entries, prs, tasks }), warnings };
-  trendsCache.set(weeks.length, { at: Date.now(), data });
+  const data = { ...buildTrends({ weeks, entries, prs, tasks, workweek }), warnings };
+  trendsCache.set(cacheKey, { at: Date.now(), data });
   return data;
 };
 

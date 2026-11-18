@@ -1,6 +1,8 @@
 // Time-investment metrics: pure aggregation of Clockify entries over a range, plus heuristics that point
 // at process improvements (meetings load, untracked time, context switching). Nothing here touches the network.
 
+import { elapsedHours, isWorkday, normalizeWorkweek, splitHours } from './workweek.js';
+
 const DAY_MS = 86_400_000;
 const DAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const round1 = (n) => Math.round(n * 10) / 10;
@@ -15,7 +17,6 @@ const median = (xs) => {
   const v = xs.filter(Number.isFinite).sort((a, b) => a - b);
   return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null;
 };
-const hoursBetween = (a, b) => (a && b ? (Date.parse(b) - Date.parse(a)) / 3_600_000 : NaN);
 const r1 = (n) => (n == null ? null : round1(n));
 
 export const rangeFor = (days, now = Date.now()) => {
@@ -25,7 +26,9 @@ export const rangeFor = (days, now = Date.now()) => {
 };
 
 // PR and task cycle times: opening → first review → merge, and started → closed in Jira
-const buildFlow = ({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSprint, ticketHours, now }) => {
+const buildFlow = ({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSprint, ticketHours, now, ww }) => {
+  // elapsed times skip non-working days when the workweek says so
+  const hoursBetween = (a, b) => elapsedHours(a, b, ww);
   const lead = prs.map((p) => hoursBetween(p.createdAt, p.mergedAt));
   const size = (p) => (p.additions || 0) + (p.deletions || 0);
   const bucket = (label, test) => { const l = prs.filter((p) => test(size(p))); return { label, count: l.length, leadHours: r1(median(l.map((p) => hoursBetween(p.createdAt, p.mergedAt)))) }; };
@@ -80,7 +83,7 @@ const buildFlow = ({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSpri
     return { key: t.key, summary: t.summary, url: t.url, loggedHours: logged, cycleHours: r1(cycle), focusPct: cycle > 0 ? Math.min(100, pct(logged, cycle)) : null };
   }).sort((a, b) => b.cycleHours - a.cycleHours).slice(0, 6);
   // work in progress now: open PRs (age) plus tasks in progress
-  const ages = openPrs.map((p) => (now - Date.parse(p.createdAt)) / 86_400_000).sort((a, b) => a - b);
+  const ages = openPrs.map((p) => hoursBetween(p.createdAt, now) / 24).sort((a, b) => a - b);
   const q = (frac) => (ages.length ? round1(ages[Math.min(ages.length - 1, Math.floor(frac * ages.length))]) : null);
   // subtasks roll up into their parent: one unit of work, not several
   const wipRoots = [...new Map(wipTasks.map((t) => [t.parent || t.key, t])).keys()];
@@ -89,7 +92,7 @@ const buildFlow = ({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSpri
     openPrs: openPrs.length, drafts: openPrs.filter((p) => p.draft).length, tasks: wipRoots.length, total: openPrs.length + wipRoots.length,
     ageP50: q(0.5), ageP90: q(0.9),
     oldest: [...openPrs].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).slice(0, 5)
-      .map((p) => ({ ref: `${p.repo.split('/').pop()}#${p.number}`, title: p.title, url: p.url, days: round1((now - Date.parse(p.createdAt)) / 86_400_000), draft: p.draft })),
+      .map((p) => ({ ref: `${p.repo.split('/').pop()}#${p.number}`, title: p.title, url: p.url, days: round1(hoursBetween(p.createdAt, now) / 24), draft: p.draft })),
     taskList: wipTasks.slice(0, 12).map((t) => ({ key: t.key, summary: t.summary, url: t.url, status: t.status || '', parent: t.parent || '' })),
   };
   const insights = [];
@@ -109,19 +112,24 @@ const buildFlow = ({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSpri
   return { prs: prFlow, tasks: taskFlow, reviews: reviewFlow, wip, insights };
 };
 
-export const buildMetrics = ({ range, entries = [], prs = [], tasks = [], prsTotal = prs.length, ticketPattern = '', reviewsGiven = [], openPrs = [], wipTasks = [], wipSprint = '', now = Date.now() }) => {
+export const buildMetrics = ({ range, entries = [], prs = [], tasks = [], prsTotal = prs.length, ticketPattern = '', reviewsGiven = [], openPrs = [], wipTasks = [], wipSprint = '', now = Date.now(), workweek }) => {
+  const ww = normalizeWorkweek(workweek);
   const TICKET = ticketPattern ? new RegExp(`\\b(?:${ticketPattern})\\b`) : null;
   const keyOf = (text) => (TICKET && TICKET.exec(text || '')?.[0]) || null;
   const logged = entries.filter((e) => e.start && Date.parse(e.start) >= range.from && Date.parse(e.start) <= range.to)
     .map((e) => ({ ...e, ticket: e.ticket || keyOf(e.description),
+      endMs: Math.min(Date.parse(e.end || new Date(range.to)), range.to),
       hours: (Math.min(Date.parse(e.end || new Date(range.to)), range.to) - Date.parse(e.start)) / 3_600_000 }))
     .filter((e) => e.hours > 0);
+  // normal hours (inside the working window), extra (outside it) and non-working days
+  const sched = { normal: 0, outside: 0, offDay: 0 };
+  logged.forEach((e) => { e.split = splitHours(Date.parse(e.start), e.endMs, ww); Object.keys(sched).forEach((k) => { sched[k] += e.split[k]; }); });
   const total = logged.reduce((s, e) => s + e.hours, 0);
   const sum = (list) => list.reduce((s, e) => s + e.hours, 0);
 
   const days = new Map();
-  for (let t = range.from; t <= range.to; t += DAY_MS) days.set(dayKey(t), { date: dayKey(t), weekday: DAYS[new Date(t).getDay()], hours: 0, tickets: new Set() });
-  logged.forEach((e) => { const d = days.get(dayKey(Date.parse(e.start))); if (d) { d.hours += e.hours; if (e.ticket) d.tickets.add(e.ticket); } });
+  for (let t = range.from; t <= range.to; t += DAY_MS) days.set(dayKey(t), { date: dayKey(t), weekday: DAYS[new Date(t).getDay()], work: isWorkday(ww, t), hours: 0, normal: 0, extra: 0, tickets: new Set() });
+  logged.forEach((e) => { const d = days.get(dayKey(Date.parse(e.start))); if (d) { d.hours += e.hours; d.normal += e.split.normal; d.extra += e.split.outside + e.split.offDay; if (e.ticket) d.tickets.add(e.ticket); } });
   const worked = [...days.values()].filter((d) => d.hours > 0);
   const ticketDays = worked.filter((d) => d.tickets.size);
 
@@ -151,12 +159,17 @@ export const buildMetrics = ({ range, entries = [], prs = [], tasks = [], prsTot
 
   // consecutive worked days ending today (or yesterday, if today is still empty)
   const seq = [...days.values()]; let streak = 0;
-  for (let i = seq.length - 1; i >= 0; i--) { if (seq[i].hours > 0) streak++; else if (i !== seq.length - 1) break; }
+  for (let i = seq.length - 1; i >= 0; i--) {
+    if (seq[i].hours > 0) streak++;
+    else if (seq[i].work && i !== seq.length - 1) break; // an empty working day ends it; weekends do not
+  }
   const insights = [];
   if (pct(meetings, total) >= 25) insights.push({ tone: 'warn', text: `${pct(meetings, total)}% del tiempo (${fmtH(meetings)}) se va en reuniones: ¿alguna recurrente se puede acortar o pasar a asíncrono?` });
   if (pct(unticketed, total) >= 35) insights.push({ tone: 'warn', text: `${pct(unticketed, total)}% de las horas (${fmtH(unticketed)}) no tienen ticket en la descripción: se pierde trazabilidad de en qué se invirtió.` });
   if (ticketsPerDay >= 4) insights.push({ tone: 'warn', text: `Tocás ${round1(ticketsPerDay)} tickets distintos por día en promedio: el cambio de contexto cuesta; probá agrupar tareas por bloque.` });
   if (pct(reviews, total) >= 20) insights.push({ tone: 'info', text: `Code review ocupa ${pct(reviews, total)}% del tiempo (${fmtH(reviews)}): ¿conviene un bloque fijo para revisar?` });
+  const extra = sched.outside + sched.offDay;
+  if (total >= 8 && pct(extra, total) >= 15) insights.push({ tone: 'warn', text: `${pct(extra, total)}% de las horas (${fmtH(extra)}) quedaron fuera de tu horario laboral${sched.offDay >= 1 ? `, ${fmtH(sched.offDay)} en días no laborables` : ''}.` });
   if (avgPerDay > 9) insights.push({ tone: 'warn', text: `Registrás ${fmtH(avgPerDay)} por día trabajado en promedio: jornada larga sostenida.` });
   const repeat = recurring.find((u) => u.count >= 3 && !MEETING.test(u.project));
   if (repeat) insights.push({ tone: 'info', text: `"${repeat.label}" se repitió ${repeat.count} veces (${fmtH(repeat.hours)}): si es rutina, es candidata a automatizar o a acotar.` });
@@ -167,7 +180,9 @@ export const buildMetrics = ({ range, entries = [], prs = [], tasks = [], prsTot
     total: round1(total), workedDays: worked.length, avgPerDay: round1(avgPerDay), ticketsPerDay: round1(ticketsPerDay),
     meetings: { hours: round1(meetings), pct: pct(meetings, total) }, reviews: { hours: round1(reviews), pct: pct(reviews, total) },
     unticketed: { hours: round1(unticketed), pct: pct(unticketed, total) },
-    byProject, byDay: [...days.values()].map((d) => ({ date: d.date, weekday: d.weekday, hours: round1(d.hours) })),
-    topTickets, recurring, insights, streak, flow: { ...buildFlow({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSprint, now, ticketHours: new Map([...tickets].map(([k, t]) => [k, t.hours])) }), prsTruncated: prsTotal > prs.length },
+    schedule: { normal: round1(sched.normal), extra: round1(extra), outside: round1(sched.outside), offDay: round1(sched.offDay), extraPct: pct(extra, total),
+      window: `${ww.days.map((d) => DAYS[d].slice(0, 3)).join(', ')} · ${String(Math.floor(ww.startMin / 60)).padStart(2, '0')}:${String(ww.startMin % 60).padStart(2, '0')}–${String(Math.floor(ww.endMin / 60)).padStart(2, '0')}:${String(ww.endMin % 60).padStart(2, '0')}` },
+    byProject, byDay: [...days.values()].filter((d) => d.work || d.hours > 0).map((d) => ({ date: d.date, weekday: d.weekday, hours: round1(d.hours), normal: round1(d.normal), extra: round1(d.extra) })),
+    topTickets, recurring, insights, streak, flow: { ...buildFlow({ range, prs, tasks, reviewsGiven, openPrs, wipTasks, wipSprint, now, ww, ticketHours: new Map([...tickets].map(([k, t]) => [k, t.hours])) }), prsTruncated: prsTotal > prs.length },
   };
 };

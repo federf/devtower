@@ -97,6 +97,12 @@ const ABOUT = {
       'Todo es opt-in: activá abajo las fuentes que quieras. Las activadas aparecen en 🔔 (y el número en el título de la pestaña); la notificación de macOS es opcional.',
       'Llegan como notificaciones de macOS a nombre de devtower (se compila con <code>npm run notifier</code>, sin paquetes). Si macOS las bloquea, avisa el navegador mientras devtower está abierto.'],
   },
+  workweek: {
+    what: 'Tu semana laboral para las métricas: qué días y en qué horario trabajás. Las horas registradas fuera de eso se muestran como extra, y los tiempos de PRs y tareas dejan de contar los días no laborables.',
+    details: ['Solo afecta cómo se calculan y muestran las métricas; no cambia nada en Clockify, Jira ni GitHub.',
+      'Con «Descontar días no laborables», un PR abierto el viernes y mergeado el lunes cuenta 24 h en vez de 72 h.',
+      'Las horas se reparten por el horario de tu equipo (zona horaria de esta máquina).'],
+  },
   links: { what: 'Atajos a tus herramientas (CI, logs, APM, docs…). Se abren con ⌘K desde cualquier sección.', details: [] },
 };
 const about = (key) => {
@@ -154,6 +160,14 @@ const renderSettings = () => {
     ${field('deployCheck.command', 'Comando ({url} = URL del PR)', f.deployCheck.command, { placeholder: '~/scripts/is-pr-in-prod.sh {url}', hint: 'Salida: 0 en prod · 2 sin mergear · 3 sin tag · 4 falta deploy' })}
     ${field('deployCheck.repos', 'Repos que verifica (owner/repo, coma)', f.deployCheck.repos.join(', '), { hint: 'Solo repos con releases que tu script entiende' })}`, 'deploy');
 
+  const WD = [[1, 'Lun'], [2, 'Mar'], [3, 'Mié'], [4, 'Jue'], [5, 'Vie'], [6, 'Sáb'], [0, 'Dom']];
+  const ww = f.workweek || { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00', skipOffDays: true };
+  const workweek = card('Semana laboral', `<span class="spill">${ww.days.length} días</span>`, `
+    <div class="sfield"><span>Días laborables</span><div class="schips">${WD.map(([d, l]) => `<label class="chip ${ww.days.includes(d) ? 'on' : ''}"><input type="checkbox" data-ww-day="${d}" ${ww.days.includes(d) ? 'checked' : ''}>${l}</label>`).join('')}</div></div>
+    <div class="sgrid inner"><label class="sfield"><span>Entrada</span><input type="time" data-path="workweek.start" value="${esc(ww.start)}"></label>
+      <label class="sfield"><span>Salida</span><input type="time" data-path="workweek.end" value="${esc(ww.end)}"></label></div>
+    <label class="cf-check"><input type="checkbox" data-ww-skip ${ww.skipOffDays !== false ? 'checked' : ''}> Descontar días no laborables en los tiempos de PRs y tareas</label>`, 'workweek');
+
   const links = card('Accesos rápidos (⌘K)', `<span class="spill">${f.links.length}</span>`, `
     <div class="slinks">${f.links.map((l, i) => `<div class="slink">
       <input data-link="${i}" data-k="icon" value="${esc(l.icon)}" maxlength="2" class="icon">
@@ -174,7 +188,7 @@ const renderSettings = () => {
     ${S.msg ? `<div class="banner ${S.msg.err ? 'err' : ''}" role="status">${esc(S.msg.text)}</div>` : ''}
     ${S.busy ? `<div class="banner">${esc(S.busy)}</div>` : ''}
     <h3 class="sect-title">Integraciones</h3><div class="sgrid">${github}${jira}${slack}${clockify}${claude}</div>
-    <h3 class="sect-title">Preferencias</h3><div class="sgrid">${general}${deploy}</div><div class="sgrid">${notify}</div>${links}
+    <h3 class="sect-title">Preferencias</h3><div class="sgrid">${general}${deploy}</div><div class="sgrid">${notify}${workweek}</div>${links}
     <div class="ssave ${S.dirty ? 'on' : ''}"><span>${S.dirty ? 'Hay cambios sin guardar' : 'Sin cambios'}</span>
       <button class="btn ghost" data-st="discard" ${S.dirty ? '' : 'disabled'}>Descartar</button>
       <button class="btn primary" data-st="save" ${S.dirty && !S.busy ? '' : 'disabled'}>Guardar y aplicar</button></div>
@@ -205,6 +219,12 @@ document.addEventListener('change', (e) => {
     if (t.checked) set.add(t.dataset.repo); else set.delete(t.dataset.repo);
     S.form.github.coreRepos = [...set];
     markDirty(); C.render();
+  } else if (t.dataset.wwDay !== undefined) {
+    const set = new Set(S.form.workweek.days);
+    if (t.checked) set.add(Number(t.dataset.wwDay)); else set.delete(Number(t.dataset.wwDay));
+    S.form.workweek = { ...S.form.workweek, days: [...set].sort() };
+    markDirty(); C.render();
+  } else if (t.dataset.wwSkip !== undefined) { S.form.workweek = { ...S.form.workweek, skipOffDays: t.checked }; markDirty();
   } else if (t.dataset.notifyPref) { S.form.notify = { ...(S.form.notify || {}), [t.dataset.notifyPref]: t.checked }; markDirty();
   } else if (t.dataset.path === 'github.org') { S.repos = []; S.form.github.coreRepos = []; markDirty(); loadRepos(t.value); }
 });
@@ -249,6 +269,7 @@ document.addEventListener('click', async (e) => {
       const r = await getJson('/api/settings', S.form);
       Object.assign(S, { busy: '', dirty: false });
       S.form = structuredClone(r.config);
+      if (C.state.metrics) { C.state.metrics.data = {}; C.state.metrics.trends = {}; } // the workweek changes every metric
       return afterRestart(r.restart);
     }
     if (act === 'link' || act === 'unlink') {

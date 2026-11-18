@@ -87,6 +87,18 @@ const sanitize = (body, current) => {
     next.links = body.links.slice(0, 60).map((l) => ({ name: str(l?.name, 80), url: str(l?.url, 500), icon: str(l?.icon, 2) || '↗', group: str(l?.group, 30) }))
       .filter((l) => l.name && /^https?:\/\//.test(l.url));
   }
+  if (body.workweek && typeof body.workweek === 'object') {
+    const w = body.workweek;
+    if ('days' in w) {
+      const days = [...new Set((Array.isArray(w.days) ? w.days : []).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort();
+      if (!days.length) throw fail('Elegí al menos un día laboral');
+      next.workweek.days = days;
+    }
+    const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+    for (const k of ['start', 'end']) if (k in w) { if (!hhmm.test(String(w[k]))) throw fail('El horario laboral debe ser HH:MM'); next.workweek[k] = w[k]; }
+    if (next.workweek.end <= next.workweek.start) throw fail('El fin de la jornada debe ser posterior al inicio');
+    if ('skipOffDays' in w) next.workweek.skipOffDays = Boolean(w.skipOffDays);
+  }
   if (body.logs) next.logs.hint = str(body.logs.hint, 500);
   if (body.notify && typeof body.notify === 'object') {
     for (const k of Object.keys(DEFAULTS.notify)) if (k in body.notify) next.notify[k] = Boolean(body.notify[k]);
@@ -105,7 +117,7 @@ const writeRaw = (cfg) => {
 
 export const createSettings = ({ loadConfig, forget, gh = 'gh', fetchImpl = fetch }) => {
   const editable = (c) => ({ user: c.user, reposDir: c.reposDir, github: c.github, jira: { site: c.jira.site, email: c.jira.email, ticketPattern: c.jira.ticketPattern, supportLabels: c.jira.supportLabels },
-    deployCheck: c.deployCheck, links: c.links, logs: c.logs, notify: c.notify });
+    deployCheck: c.deployCheck, links: c.links, logs: c.logs, notify: c.notify, workweek: c.workweek });
 
   const status = async () => {
     const c = loadConfig();
