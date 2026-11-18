@@ -14,6 +14,7 @@ import { CONFIG_DIR, loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
 import { createClockify } from './clockify.js';
 import { createNotifier } from './notify.js';
+import { buildSummary, toMarkdown, windowFor } from './summary.js';
 import { readSecret } from './secrets.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -1090,6 +1091,45 @@ Si el borrador se creó, respondé la palabra OK seguida del canal y el thread_t
   return t.link;
 };
 
+// ------------------------------------------------------------------ Summary: standup / weekly
+
+const summaryCache = new Map();
+const loadSummary = async (kind, force) => {
+  const w = windowFor(kind);
+  const hit = summaryCache.get(w.kind);
+  if (!force && hit && Date.now() - hit.at < 2 * 60_000) return hit.data;
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const warnings = [];
+  const guard = (name, p) => p.catch((e) => { warnings.push(`${name}: ${e.message}`); return []; });
+  const github = async () => {
+    const login = (await ghExec(['api', 'user', '--jq', '.login'])).trim();
+    const pr = `... on PullRequest { number title url createdAt mergedAt additions deletions author { login } repository { nameWithOwner }`;
+    const query = `query {
+      merged: search(query: "is:pr author:${login} is:merged merged:>=${day(w.from)}", type: ISSUE, first: 50) { nodes { ${pr} } } }
+      reviewed: search(query: "is:pr reviewed-by:${login} -author:${login} updated:>=${day(w.from)}", type: ISSUE, first: 50) { nodes { ${pr}
+        reviews(last: 20) { nodes { submittedAt author { login } } } } } }
+    }`;
+    const d = JSON.parse(await ghExec(['api', 'graphql', '-f', `query=${query}`])).data;
+    const repoOf = (n) => n.repository.nameWithOwner;
+    return {
+      merged: d.merged.nodes.filter((n) => n.number).map((n) => ({ repo: repoOf(n), number: n.number, title: n.title, url: n.url,
+        createdAt: n.createdAt, mergedAt: n.mergedAt, additions: n.additions, deletions: n.deletions })),
+      reviewed: d.reviewed.nodes.filter((n) => n.number).map((n) => ({ n, mine: n.reviews.nodes.filter((r) => r.author?.login === login
+        && Date.parse(r.submittedAt) >= w.from && Date.parse(r.submittedAt) <= w.to).map((r) => r.submittedAt).sort().pop() }))
+        .filter((x) => x.mine).map(({ n, mine }) => ({ repo: repoOf(n), number: n.number, title: n.title, url: n.url, author: n.author?.login || '', reviewedAt: mine })),
+    };
+  };
+  const [gh, tasks, entries] = await Promise.all([
+    github().catch((e) => { warnings.push(`GitHub: ${e.message}`); return { merged: [], reviewed: [] }; }),
+    guard('Jira', (await direct.has('jira')) ? direct.jira.changedByMe(w.from, w.to) : Promise.resolve([])),
+    guard('Clockify', clockify.entries(w.from, w.to)),
+  ]);
+  const data = { ...buildSummary({ window: w, merged: gh.merged, reviewed: gh.reviewed, tasks, entries, ticketPattern: CONFIG.jira.ticketPattern }), warnings };
+  data.markdown = toMarkdown(data);
+  summaryCache.set(w.kind, { at: Date.now(), data });
+  return data;
+};
+
 // ------------------------------------------------------------------- Usage
 
 const runCcusage = (cmd) => new Promise((resolve, reject) => {
@@ -1213,7 +1253,7 @@ const sprintBoard = async (items) => {
     return { ...board, swimlanes: board.swimlanes.length ? board.swimlanes : [{ name: 'Todas', query: '' }] };
   } catch { return null; }
 };
-const withLanes = async (items, board, inSprint = (i) => i.sprint?.state === 'active') => {
+const withLanes = async (items, board, inSprint = (i) => i.sprint?.state === 'active' || i.viaParent) => {
   if (!board) return items;
   const keys = items.filter(inSprint).map((i) => i.key);
   const lanes = await direct.jira.assignLanes(keys, board.swimlanes);
@@ -1439,6 +1479,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/deploy-check') return json(res, await deployCheck((await readBody(req)).key));
     if (req.method === 'GET' && p === '/api/health') return json(res, await loadHealth(url.searchParams.get('refresh') === '1'));
+    if (req.method === 'GET' && p === '/api/summary') return json(res, await loadSummary(url.searchParams.get('kind') === 'week' ? 'week' : 'standup', url.searchParams.get('refresh') === '1'));
     if (req.method === 'GET' && p === '/api/notifications') return json(res, await notifier.list());
     if (req.method === 'POST' && p === '/api/notifications/read') {
       const { ids } = await readBody(req);

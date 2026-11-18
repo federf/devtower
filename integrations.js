@@ -3,7 +3,7 @@ import { readSecret as storedSecret } from './secrets.js';
 // Direct Jira/Slack access with personal tokens (see secrets.js for where they are stored).
 // No Claude, no quota: used for background refresh and explicit writes.
 
-const JIRA_FIELDS = ['summary', 'status', 'priority', 'issuetype', 'updated', 'parent', 'duedate'];
+const JIRA_FIELDS = ['summary', 'status', 'priority', 'issuetype', 'updated', 'parent', 'duedate', 'assignee'];
 const LOOKBACK_DAYS = 7;
 const MAX_CHECKS = 25;
 
@@ -91,15 +91,16 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
       || open.sort((a, b) => Date.parse(a.startDate || 8.64e15) - Date.parse(b.startDate || 8.64e15))[0];
     return pick ? sprintInfo(pick) : null;
   };
-  const issues = async (jql) => {
+  const issues = async (jql, { changelog = false } = {}) => {
     const field = await sprintField();
     const data = await jira('/rest/api/3/search/jql', { method: 'POST', body: {
-      jql, maxResults: 100, fields: [...JIRA_FIELDS, ...(field ? [field] : [])],
+      jql, maxResults: 100, fields: [...JIRA_FIELDS, ...(field ? [field] : [])], ...(changelog ? { expand: 'changelog' } : {}),
     } });
-    return (data.issues || []).map(({ key, fields: f }) => ({
+    return (data.issues || []).map(({ key, fields: f, changelog: log }) => ({
+      ...(changelog ? { changelog: log?.histories || [] } : {}),
       key, summary: f.summary || '', status: f.status?.name || '', statusId: f.status?.id || '', statusCategory: f.status?.statusCategory?.key || '',
       priority: f.priority?.name || '', type: f.issuetype?.name || '', updated: f.updated || '',
-      due: f.duedate || '', parent: f.parent?.key || '', url: `${JIRA_SITE}/browse/${key}`,
+      due: f.duedate || '', assignee: f.assignee?.displayName || '', parent: f.parent?.key || '', url: `${JIRA_SITE}/browse/${key}`,
       sprint: field ? currentSprint(f[field]) : null,
     }));
   };
@@ -110,7 +111,13 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
       issues('assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'),
       issues('assignee = currentUser() AND sprint in openSprints() ORDER BY updated DESC'),
     ]);
-    return [...new Map([...open, ...sprint].map((i) => [i.key, i])).values()];
+    const mine = [...new Map([...open, ...sprint].map((i) => [i.key, i])).values()];
+    // every subtask of my sprint tasks, whoever owns it and whatever sprint (if any) it sits in
+    const parents = mine.filter((i) => i.sprint?.state === 'active' && !i.parent).map((i) => i.key);
+    const kids = parents.length ? await issues(`parent in (${parents.join(',')}) ORDER BY updated DESC`) : [];
+    const known = new Set(mine.map((i) => i.key));
+    return [...mine.map((i) => (kids.some((k) => k.key === i.key) ? { ...i, viaParent: true } : i)),
+      ...kids.filter((k) => !known.has(k.key)).map((k) => ({ ...k, viaParent: true }))];
   };
 
   // next sprint = earliest future sprint of the boards running an active sprint
@@ -159,6 +166,19 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
     .map((t) => ({ id: String(t.id), name: t.name, to: t.to?.name || '', toId: String(t.to?.id || ''), toCategory: t.to?.statusCategory?.key || '' }));
 
   let myself;
+  // issues whose status I moved between two instants (JQL wants local "yyyy/MM/dd HH:mm"),
+  // each with my last transition inside the window: when it happened and from/to which status
+  const changedByMe = async (from, to) => {
+    const f = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+    const [me, list] = await Promise.all([jiraMe(), issues(`status CHANGED BY currentUser() DURING ("${f(from)}", "${f(to)}") ORDER BY updated DESC`, { changelog: true })]);
+    return list.map(({ changelog, ...issue }) => {
+      const moves = (changelog || []).filter((h) => h.author?.accountId === me.accountId && Date.parse(h.created) >= from && Date.parse(h.created) <= to)
+        .flatMap((h) => h.items.filter((i) => i.field === 'status').map((i) => ({ at: h.created, from: i.fromString || '', to: i.toString || '' })))
+        .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      const last = moves[moves.length - 1];
+      return { ...issue, movedAt: last?.at || issue.updated, fromStatus: moves[0]?.from || '', toStatus: last?.to || issue.status };
+    });
+  };
   const jiraMe = async () => (myself ??= await jira('/rest/api/3/myself').then((m) => ({ accountId: m.accountId, name: m.displayName })));
   const person = (u) => (u ? { accountId: u.accountId, name: u.displayName } : null);
   // comments by others on my issues (assigned, reported or watched) updated in the last minutes
@@ -181,10 +201,12 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
   };
 
   const getIssue = async (key, { comments = 5 } = {}) => {
-    const { fields: f } = await jira(`/rest/api/3/issue/${key}?fields=summary,description,labels,reporter,assignee,status,issuetype,priority,parent,comment`);
+    const { fields: f } = await jira(`/rest/api/3/issue/${key}?fields=summary,description,labels,reporter,assignee,status,issuetype,priority,parent,subtasks,comment`);
     return {
       key, url: `${JIRA_SITE}/browse/${key}`, summary: f.summary || '', status: f.status?.name || '', type: f.issuetype?.name || '',
       priority: f.priority?.name || '', labels: f.labels || [], parent: f.parent ? { key: f.parent.key, summary: f.parent.fields?.summary || '' } : null,
+      subtasks: (f.subtasks || []).map((s) => ({ key: s.key, summary: s.fields?.summary || '', status: s.fields?.status?.name || '',
+        statusCategory: s.fields?.status?.statusCategory?.key || '', priority: s.fields?.priority?.name || '' })),
       reporter: person(f.reporter), assignee: person(f.assignee), description: adfText(f.description).trim().slice(0, 4000),
       comments: (f.comment?.comments || []).slice(-comments).map((c) => ({ author: c.author?.displayName || '', at: c.created, text: adfText(c.body).trim().slice(0, 1200) })),
     };
@@ -316,7 +338,7 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
   return {
     has,
     forget,
-    jira: { search: searchJira, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
+    jira: { search: searchJira, changedByMe, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
     slack: { pending: pendingSlack, send: sendSlack, recent: recentSlack },
   };
 };

@@ -5,7 +5,7 @@ const { state, api, esc, $, setView } = C;
 
 const JIRA_BROWSE = `${window.DEVTOWER?.jiraSite || ''}/browse`;
 const TICKET_RE = /^\s*([a-z][a-z0-9]{1,9}-\d{1,7})\s*$/i;
-const VIEWS = [['today', 'Hoy', '◎'], ['tasks', 'Tareas', '☰'], ['prs', 'Pull requests', '⑂'], ['slack', 'Slack', '#'], ['threads', 'Hilos', '✦'], ['work-items', 'Trabajos', '◇']];
+const VIEWS = [['today', 'Hoy', '◎'], ['tasks', 'Tareas', '☰'], ['prs', 'Pull requests', '⑂'], ['slack', 'Slack', '#'], ['threads', 'Hilos', '✦'], ['work-items', 'Trabajos', '◇'], ['summary', 'Resumen', '≡']];
 
 let links = [];
 const pal = { q: '', sel: 0, items: [] };

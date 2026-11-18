@@ -105,5 +105,9 @@ export const createClockify = ({ readSecret, ticketPattern, fetchImpl = fetch, n
     return { description: `[${key}]: ${summary}`, projectId, tagIds, billable: false };
   };
 
-  return { status, start, stop, taskEntry, forget };
+  // finished and running entries that started inside [from, to] (history covers the last 28 days)
+  const entries = async (from, to) => (await loadHistory()).entries.map(shape)
+    .filter((e) => Date.parse(e.start) >= from && Date.parse(e.start) <= to);
+
+  return { status, start, stop, taskEntry, entries, forget };
 };

@@ -200,6 +200,13 @@ const openPreview = (key) => {
   const d = state.preview.data[key];
   if (!d || d.error || Date.now() - (d.at || 0) > 5 * 60_000) loadPreview(key);
 };
+const subtasksHtml = (subs = []) => {
+  if (!subs.length) return '';
+  const done = subs.filter((s) => s.statusCategory === 'done').length;
+  return `<h4>Subtareas <b>${done}/${subs.length}</b></h4>
+    <div class="sprint-progress" title="${done} de ${subs.length} hechas"><i style="width:${Math.round((done / subs.length) * 100)}%"></i></div>
+    <div class="subtasks">${subs.map((s) => `<div class="subtask"><a class="key" target="_blank" href="${JIRA_BROWSE}/${esc(s.key)}" title="Abrir en Jira">${esc(s.key)}</a><span class="${s.statusCategory === 'done' ? 'done' : ''}">${esc(s.summary)}</span><span class="tag ${s.statusCategory === 'indeterminate' ? 'info' : ''}">${esc(s.status)}</span></div>`).join('')}</div>`;
+};
 const previewHtml = (key) => {
   if (!state.preview.open.has(key)) return '';
   const d = state.preview.data[key] || { loading: true };
@@ -209,22 +216,38 @@ const previewHtml = (key) => {
   const meta = [i.reporter?.name && `Reportó ${esc(i.reporter.name)}`, i.assignee?.name && `Asignada a ${esc(i.assignee.name)}`, i.parent && `Padre ${esc(i.parent.key)} · ${esc(i.parent.summary)}`, i.labels.length && `Labels: ${i.labels.map(esc).join(', ')}`].filter(Boolean).join(' · ');
   return `<div class="tpreview">
     ${meta ? `<p class="note">${meta}</p>` : ''}
+    ${subtasksHtml(i.subtasks)}
     <h4>Descripción</h4><div class="tptext">${i.description ? esc(i.description) : '<span class="note">Sin descripción</span>'}</div>
     <h4>Comentarios <b>${i.comments.length}</b>${i.comments.length >= 20 ? ' <span class="note">(últimos 20)</span>' : ''}</h4>
     ${i.comments.length ? i.comments.slice().reverse().map((c) => `<div class="tpcomment"><div><b>${esc(c.author)}</b><em>${ago(c.at)}</em></div><div class="tptext">${esc(c.text)}</div></div>`).join('') : '<p class="note">Sin comentarios</p>'}
   </div>`;
 };
 
-const taskCard = (t) => {
+// parents first, each followed by its subtasks (when both are in the list); keeps the incoming order otherwise
+const hierarchy = (list) => {
+  const keys = new Set(list.map((t) => t.key));
+  const kids = new Map();
+  for (const t of list) {
+    const p = t.jira?.parent;
+    if (p && p !== t.key && keys.has(p)) kids.set(p, [...(kids.get(p) || []), t]);
+  }
+  const nested = new Set([...kids.values()].flat());
+  return list.filter((t) => !nested.has(t)).flatMap((t) => [t, ...(kids.get(t.key) || [])]);
+};
+// subtask of a sprint task that is not in the active sprint: Jira leaves it out of the board
+const sprintGap = (j) => (j?.viaParent && j.sprint?.state !== 'active' ? (j.sprint ? `En otro sprint: ${j.sprint.name}` : 'Sin sprint') : '');
+const nestedIn = (t, list) => !!t.jira?.parent && list.some((o) => o.key === t.jira.parent);
+
+const taskCard = (t, list = []) => {
   const j = t.jira;
   const links = [
     ...t.threads.slice(0, 3).map((th) => `<div class="link" data-act="open-thread" data-id="${th.id}"><i class="dot ${th.running ? 'run' : ''}"></i><span>${esc(th.title)}</span><em>${ago(th.updatedAt)}</em></div>`),
     ...t.prs.map((p) => `<div class="link prl">${C.prChip({ key: p.key, repo: p.repo, number: p.number, created: false })}<span class="tags">${C.prTags(p)}</span></div>`),
   ].join('');
   const has = t.threads.length > 0;
-  return `<div class="card task" data-task="${esc(t.key)}">
-    <div class="t"><a class="key" target="_blank" href="${JIRA_BROWSE}/${t.key}" title="Abrir en Jira">${esc(t.key)}</a><span>${j ? esc(j.summary) : esc(t.prs[0]?.title || t.threads[0]?.title || '')}</span></div>
-    <div class="m">${j ? `<span class="tag ${statusCls(j)}" title="Estado en Jira">${esc(j.status)}</span><span class="tag" title="Prioridad">${esc(j.priority || '')}</span><span class="tag" title="Tipo de issue">${esc(j.type || '')}</span><span>${j.updated ? `actualizada ${ago(j.updated)}` : ''}</span>` : '<span class="tag" title="Esta tarea no está en tu lista de Jira (no asignada o ya cerrada): se detectó por tus hilos y PRs">detectada en hilos/PRs</span>'}</div>
+  return `<div class="card task ${nestedIn(t, list) ? 'sub' : ''}" data-task="${esc(t.key)}">
+    <div class="t">${nestedIn(t, list) ? '<span class="sub-arrow" title="Subtarea">↳</span>' : ''}<a class="key" target="_blank" href="${JIRA_BROWSE}/${t.key}" title="Abrir en Jira">${esc(t.key)}</a><span>${j ? esc(j.summary) : esc(t.prs[0]?.title || t.threads[0]?.title || '')}</span></div>
+    <div class="m">${j ? `<span class="tag ${statusCls(j)}" title="Estado en Jira">${esc(j.status)}</span><span class="tag" title="Prioridad">${esc(j.priority || '')}</span><span class="tag" title="Tipo de issue">${esc(j.type || '')}</span>${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>` : ''}${j.assignee ? `<span class="tag" title="Asignada a">${esc(j.assignee)}</span>` : ''}${j.parent && !nestedIn(t, list) ? `<span class="tag" title="Tarea padre">↳ ${esc(j.parent)}</span>` : ''}<span>${j.updated ? `actualizada ${ago(j.updated)}` : ''}</span>` : '<span class="tag" title="Esta tarea no está en tu lista de Jira (no asignada o ya cerrada): se detectó por tus hilos y PRs">detectada en hilos/PRs</span>'}</div>
     ${links ? `<div class="links">${links}</div>` : ''}
     <div class="acts">
       ${has ? btn('task-continue', 'Continuar hilo', true, 'Abrir el hilo más reciente de esta tarea') : btn('task-start', 'Empezar con Claude', true, 'Nuevo hilo con el ticket como contexto: Claude lo lee en Jira y propone un plan (modo Plan, no edita)')}
@@ -262,13 +285,14 @@ const sprintHead = (sprint, list, { refresh = false } = {}) => {
 
 // ------------------------------------------------------------------ board (Jira swimlanes + columns)
 
-const boardCard = (t, selected) => {
+const boardCard = (t, selected, list = []) => {
   const j = t.jira;
   const marks = [t.threads.length ? `<span title="${t.threads.length} hilo(s) de Claude">✦ ${t.threads.length}</span>` : '',
     t.prs.length ? `<span title="${t.prs.length} PR(s)">⑂ ${t.prs.length}</span>` : ''].join('');
-  return `<button class="kcard ${selected ? 'on' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado, o arriba/abajo para ordenarla">
-    <span class="kkey">${esc(t.key)}</span><span class="ksum">${esc(j.summary)}</span>
-    <span class="kmeta"><span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
+  const sub = nestedIn(t, list);
+  return `<button class="kcard ${selected ? 'on' : ''} ${sub ? 'sub' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado, o arriba/abajo para ordenarla">
+    <span class="kkey">${sub ? '↳ ' : ''}${esc(t.key)}${j.parent && !sub ? `<em class="kparent" title="Tarea padre">↳ ${esc(j.parent)}</em>` : ''}</span><span class="ksum">${esc(j.summary)}</span>
+    <span class="kmeta">${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>` : ''}<span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
 };
 
 const renderBoard = (tasks, board) => {
@@ -282,9 +306,9 @@ const renderBoard = (tasks, board) => {
     ${sel ? `<div class="kdetail">${taskCard(sel)}</div>` : ''}
     <div class="kanban" style="--cols:${board.columns.length}">${board.columns.map((c, ci) => {
       const rank = (t) => { const i = state.taskOrder.indexOf(t.key); return i === -1 ? Infinity : i; };
-      const list = lane.tasks.filter((t) => inColumn(t) === ci).sort((a, b) => rank(a) - rank(b));
+      const list = hierarchy(lane.tasks.filter((t) => inColumn(t) === ci).sort((a, b) => rank(a) - rank(b)));
       const deployCol = /deploy/i.test(c.name) && list.length;
-      return `<section class="kcol" data-col="${ci}"><header><span>${esc(c.name)}</span>${deployCol ? `<button class="btn sm ghost" data-act="deploy-column" data-keys="${esc(list.map((t) => t.key).join(','))}" title="Verificar con tu script si estas tareas ya están en prod">🚀</button>` : ''}<b>${list.length}</b></header>${list.map((t) => boardCard(t, t.key === state.taskSel)).join('') || '<div class="kempty">—</div>'}</section>`;
+      return `<section class="kcol" data-col="${ci}"><header><span>${esc(c.name)}</span>${deployCol ? `<button class="btn sm ghost" data-act="deploy-column" data-keys="${esc(list.map((t) => t.key).join(','))}" title="Verificar con tu script si estas tareas ya están en prod">🚀</button>` : ''}<b>${list.length}</b></header>${list.map((t) => boardCard(t, t.key === state.taskSel, list)).join('') || '<div class="kempty">—</div>'}</section>`;
     }).join('')}</div>
     ${hidden.length ? `<p class="note">${hidden.length} ${hidden.length === 1 ? 'tarea' : 'tareas'} en un estado que el tablero no muestra (${esc([...new Set(hidden.map((t) => t.jira.status))].join(', '))}): ${hidden.map((t) => `<a class="lnk" target="_blank" href="${JIRA_BROWSE}/${t.key}">${esc(t.key)}</a>`).join(' · ')}</p>` : ''}`;
 };
@@ -294,7 +318,7 @@ const renderTasks = () => {
   const scopes = [['sprint', 'Sprint activo'], ['next', 'Próximo sprint'], ['all', 'Todas']];
   const filters = [['withpr', '⑂ Con PR'], ['nothread', 'Sin hilo']];
   const scope = state.taskScope;
-  const sprintItems = jr.items.filter((i) => i.sprint?.state === 'active');
+  const sprintItems = jr.items.filter((i) => i.sprint?.state === 'active' || i.viaParent);
   const nextItems = jr.next?.items || [];
   const source = scope === 'sprint' ? sprintItems : scope === 'next' ? nextItems : jr.items;
   let tasks = buildTasks(source, scope === 'all').filter((t) => C.match(t.key, t.jira?.summary || '', t.jira?.status || '', t.prs.map((p) => p.title).join(' ')));
@@ -303,7 +327,7 @@ const renderTasks = () => {
   const sortFn = (a, b) => Date.parse(b.jira?.updated || 0) - Date.parse(a.jira?.updated || 0);
   const active = tasks.filter((t) => t.jira?.statusCategory === 'indeterminate').sort(sortFn);
   const todo = tasks.filter((t) => t.jira && t.jira.statusCategory === 'new').sort(sortFn);
-  const done = tasks.filter((t) => t.jira?.statusCategory === 'done').sort(sortFn);
+  const done = hierarchy(tasks.filter((t) => t.jira?.statusCategory === 'done').sort(sortFn));
   const detected = tasks.filter((t) => !t.jira);
   const board = scope !== 'all' && jr.board && tasks.some((t) => Number.isInteger(t.jira?.lane)) ? jr.board : null;
   const doneList = done.length ? `${sectionHead('Hechas', done.length)}<div class="done-list">${done.map((t) => `<a target="_blank" href="${JIRA_BROWSE}/${t.key}"><b>${esc(t.key)}</b><span>${esc(t.jira.summary)}</span><em>${esc(t.jira.status)}</em></a>`).join('')}</div>` : '';
@@ -322,7 +346,7 @@ const renderTasks = () => {
             : jr.next.sprint ? sprintHead(jr.next.sprint, nextItems, { refresh: true }) + `<div class="note">Consultado ${ago(jr.next.fetchedAt)}</div>`
               : emptyState('⏭', 'Sin próximo sprint', 'Tu tablero todavía no tiene un sprint futuro planificado.', '<button class="btn" data-act="next-sprint-refresh">Reintentar</button>'))
       : '';
-  const group = (title, list, hint) => (list.length ? `${sectionHead(title, list.length, hint)}<div class="list-wide">${list.map(taskCard).join('')}</div>` : '');
+  const group = (title, list, hint) => (list.length ? `${sectionHead(title, list.length, hint)}<div class="list-wide">${hierarchy(list).map((t, _, all) => taskCard(t, all)).join('')}</div>` : '');
   return `
     <div class="viewbar">
       <div class="seg">${scopes.map(([k, l]) => `<button class="${scope === k ? 'on' : ''}" data-act="task-scope" data-s="${k}">${l}</button>`).join('')}</div>

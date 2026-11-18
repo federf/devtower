@@ -52,9 +52,28 @@ test('Jira search maps fields and authenticates with basic auth', async () => {
   });
   const [issue] = await api.jira.search();
   assert.deepEqual(issue, { key: 'TEST-1', summary: 'Fixture', status: 'En curso', statusId: '3', statusCategory: 'indeterminate', priority: 'Alta',
-    type: 'Tarea', updated: '2026-11-06', due: '2026-11-07', parent: 'TEST-0', url: 'https://example.atlassian.net/browse/TEST-1',
+    type: 'Tarea', updated: '2026-11-06', due: '2026-11-07', assignee: '', parent: 'TEST-0', url: 'https://example.atlassian.net/browse/TEST-1',
     sprint: { id: 2, name: 'Sprint 2', state: 'active', boardId: 7, start: '2026-11-01', end: '2026-11-14' } });
   assert.equal(calls[0].init.headers.authorization, `Basic ${Buffer.from('me@example.test:jira-secret').toString('base64')}`);
+});
+
+test('Jira search adds every subtask of my sprint tasks, with its sprint (or none)', async () => {
+  const sprints = [{ id: 2, name: 'Sprint 2', state: 'active', boardId: 7, startDate: '2026-11-01', endDate: '2026-11-14' }];
+  const fields = { status: { id: '3', name: 'En curso', statusCategory: { key: 'indeterminate' } }, priority: { name: 'Alta' }, updated: '2026-11-06' };
+  const { api } = setup({
+    field: () => reply([{ id: 'customfield_10007', schema: { custom: 'com.pyxis.greenhopper.jira:gh-sprint' } }]),
+    jql: (u, init) => {
+      const jql = JSON.parse(init.body).jql;
+      if (jql.startsWith('parent in')) {
+        assert.match(jql, /parent in \(TEST-1\)/);
+        return reply({ issues: [{ key: 'TEST-2', fields: { ...fields, summary: 'Sin sprint', issuetype: { name: 'Subtarea' }, parent: { key: 'TEST-1' }, assignee: { displayName: 'Ada' }, customfield_10007: null } }] });
+      }
+      return reply({ issues: jql.includes('openSprints') ? [{ key: 'TEST-1', fields: { ...fields, summary: 'Padre', issuetype: { name: 'Tarea' }, customfield_10007: sprints } }] : [] });
+    },
+  });
+  const items = await api.jira.search();
+  const sub = items.find((i) => i.key === 'TEST-2');
+  assert.deepEqual([items.length, sub.viaParent, sub.sprint, sub.assignee, sub.parent], [2, true, null, 'Ada', 'TEST-1']);
 });
 
 test('Jira auth failure never echoes the token', async () => {
