@@ -52,7 +52,7 @@ test('Jira search maps fields and authenticates with basic auth', async () => {
   });
   const [issue] = await api.jira.search();
   assert.deepEqual(issue, { key: 'TEST-1', summary: 'Fixture', status: 'En curso', statusId: '3', statusCategory: 'indeterminate', priority: 'Alta',
-    type: 'Tarea', updated: '2026-11-06', due: '2026-11-07', assignee: '', parent: 'TEST-0', url: 'https://example.atlassian.net/browse/TEST-1',
+    type: 'Tarea', updated: '2026-11-06', due: '2026-11-07', created: '', resolved: '', assignee: '', parent: 'TEST-0', url: 'https://example.atlassian.net/browse/TEST-1',
     sprint: { id: 2, name: 'Sprint 2', state: 'active', boardId: 7, start: '2026-11-01', end: '2026-11-14' } });
   assert.equal(calls[0].init.headers.authorization, `Basic ${Buffer.from('me@example.test:jira-secret').toString('base64')}`);
 });

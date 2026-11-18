@@ -17,7 +17,7 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
   const project = path.join(home, '.claude', 'projects', 'fixture');
   await fs.mkdir(path.join(app, 'public'), { recursive: true });
   await fs.mkdir(project, { recursive: true });
-  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'notify.js', 'summary.js', 'package.json']) {
+  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'notify.js', 'summary.js', 'metrics.js', 'trends.js', 'package.json']) {
     if (name === 'server.js') {
       const original = await fs.readFile(path.join(source, name), 'utf8');
       const guarded = original.replace("import { spawn, execFile } from 'node:child_process';",
@@ -183,6 +183,18 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
       assert.match(result.data.error, /1:50pm/);
       assert.doesNotMatch(result.data.error, /private-session|session_id|is_error/);
     }
+  });
+
+  await t.test('dismiss-all hides every pending Slack item and undo restores only the last bulk dismissal', async () => {
+    assert.equal((await request('/api/slack/undo-dismiss', {})).status, 400);
+    const all = await request('/api/slack/dismiss-all', {});
+    assert.equal(all.data.count, 1);
+    const hidden = (await request('/api/slack')).data;
+    assert.deepEqual([hidden.items.length, hidden.lastBulk], [0, 1]);
+    const undo = await request('/api/slack/undo-dismiss', {});
+    assert.equal(undo.data.count, 1);
+    const back = (await request('/api/slack')).data;
+    assert.deepEqual([back.items.length, back.lastBulk], [1, 0]);
   });
 
   await t.test('direct send without a Slack token fails clearly and never calls Claude', async () => {

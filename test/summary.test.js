@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSummary, toMarkdown, windowFor } from '../summary.js';
+import { buildSummary, toMarkdown, toScript, windowFor } from '../summary.js';
 
 const at = (iso) => new Date(iso).getTime();
 
@@ -72,4 +72,50 @@ test('timeline merges every kind of event, newest first, using Jira transition t
   });
   assert.deepEqual(s.timeline.map((e) => e.type), ['reviewed', 'closed', 'time', 'merged']);
   assert.equal(s.timeline[1].detail, 'En curso → Listo');
+});
+
+test('daily covers only sprint, Clockify-logged or fresh tasks with a due date; only explicit "En curso" is in progress; due drops stale dates', () => {
+  const w = { kind: 'daily', label: 'Ayer', from: at('2026-11-17T00:00:00'), to: at('2026-11-18T10:00:00') };
+  const sprint = { state: 'active' };
+  const t = (key, status, statusCategory, extra = {}) => ({ key, summary: key, status, statusCategory, url: key, due: '', created: '2026-11-01T00:00:00', sprint, ...extra });
+  const s = buildSummary({ window: w, ticketPattern: '[A-I]',
+    entries: [{ description: 'C trabajo', project: 'Core', start: '2026-11-17T09:00:00', end: '2026-11-17T10:00:00' }],
+    open: [
+      t('A', 'En curso', 'indeterminate'),
+      t('B', 'Seleccionado para desarrollo', 'new', { due: '2026-11-18', created: '2026-11-17T15:00:00' }),
+      t('C', 'Esperando por el cliente', 'indeterminate', { sprint: null }),
+      t('D', 'Backlog', 'new', { due: '2019-01-04' }),
+      t('E', 'Backlog', 'new', { due: '2026-11-30' }),
+      t('F', 'Backlog', 'new', { due: '2026-12-30' }),
+      t('G', 'En curso', 'indeterminate', { sprint: null }),
+      t('H', 'Backlog', 'new', { due: '2026-11-19', sprint: null }),
+      t('I', 'Seleccionado para desarrollo', 'new', { due: '2026-11-18', sprint: null, created: '2026-11-17T15:43:00' }),
+    ] });
+  assert.deepEqual(s.tasks.inProgress.map((x) => x.key), ['A']);
+  assert.deepEqual(s.tasks.waiting.map((x) => x.key), ['C']);
+  assert.deepEqual(s.tasks.due.map((x) => [x.key, x.dueToday, x.fresh]), [['B', true, true], ['I', true, true], ['E', false, false]]);
+  assert.match(toMarkdown(s), /\*Con vencimiento\*\n• <B\|B> B — vence hoy \(nueva\)/);
+});
+
+test('script is plain first-person talking points', () => {
+  const w = { kind: 'daily', label: 'Ayer', from: at('2026-11-17T00:00:00'), to: at('2026-11-18T10:00:00') };
+  const s = buildSummary({ window: w, merged: [{ repo: 'o/r', number: 1, title: '[X-1] - feat a', url: 'u', createdAt: '2026-11-17T01:00:00', mergedAt: '2026-11-17T02:00:00' }],
+    open: [{ key: 'X-2', summary: 'Hacer b', status: 'En curso', statusCategory: 'indeterminate', url: 'j', sprint: { state: 'active' }, due: '', created: '' }] });
+  const text = toScript(s);
+  assert.match(text, /AYER\nMergeé 1 PR:\n  • r#1 feat a/);
+  assert.match(text, /HOY\nEstoy en:\n  • X-2 Hacer b/);
+  assert.doesNotMatch(text, /https?:/);
+});
+
+test("standup hours stop at midnight: today's Clockify entries are not counted as yesterday", () => {
+  const w = { kind: 'standup', label: 'Ayer', from: at('2026-11-17T00:00:00'), to: at('2026-11-18T11:40:00') };
+  const s = buildSummary({ window: w, entries: [
+    { description: 'ayer', project: 'Core', start: '2026-11-17T16:00:00', end: '2026-11-17T17:00:00' },
+    { description: 'cruza medianoche', project: 'Core', start: '2026-11-17T23:30:00', end: '2026-11-18T00:30:00' },
+    { description: 'hoy', project: 'Meeting', start: '2026-11-18T09:00:00', end: '2026-11-18T10:00:00' },
+  ] });
+  assert.equal(s.hours.total, 1.5);
+  assert.deepEqual(s.hours.byProject.map((p) => p.project), ['Core']);
+  const week = buildSummary({ window: { ...w, kind: 'week' }, entries: [{ description: 'hoy', project: 'Meeting', start: '2026-11-18T09:00:00', end: '2026-11-18T10:00:00' }] });
+  assert.equal(week.hours.total, 1);
 });

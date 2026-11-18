@@ -14,7 +14,9 @@ import { CONFIG_DIR, loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
 import { createClockify } from './clockify.js';
 import { createNotifier } from './notify.js';
-import { buildSummary, toMarkdown, windowFor } from './summary.js';
+import { buildMetrics, rangeFor } from './metrics.js';
+import { buildTrends, dayStr, weeksFor } from './trends.js';
+import { buildSummary, scriptSections, toMarkdown, toScript, windowFor } from './summary.js';
 import { readSecret } from './secrets.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -1091,6 +1093,82 @@ Si el borrador se creó, respondé la palabra OK seguida del canal y el thread_t
   return t.link;
 };
 
+// ------------------------------------------------------------------ Metrics: time invested and cycle times
+
+const loadMetrics = async (days) => {
+  const range = rangeFor(days);
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const warnings = [];
+  const guard = (name, p) => p.catch((e) => { warnings.push(`${name}: ${e.message}`); return []; });
+  const mergedPrs = async () => {
+    const login = (await ghExec(['api', 'user', '--jq', '.login'])).trim();
+    const query = `query {
+      merged: search(query: "is:pr author:${login} is:merged merged:>=${day(range.from)}", type: ISSUE, first: 100) { issueCount nodes { ... on PullRequest {
+        number title url createdAt mergedAt additions deletions repository { nameWithOwner } reviews(first: 30) { nodes { state submittedAt author { login } } } } } }
+      reviewed: search(query: "is:pr reviewed-by:${login} -author:${login} updated:>=${day(range.from)}", type: ISSUE, first: 100) { nodes { ... on PullRequest {
+        number repository { nameWithOwner } reviews(last: 30) { nodes { submittedAt author { login } } } } } }
+      open: search(query: "is:pr is:open author:${login}", type: ISSUE, first: 50) { nodes { ... on PullRequest { number title url createdAt isDraft repository { nameWithOwner } } } }
+    }`;
+    const d = JSON.parse(await ghExec(['api', 'graphql', '-f', `query=${query}`])).data;
+    const human = (who) => who && who !== login && who !== 'github-actions' && !who.endsWith('[bot]') && !/^(claude|codex|copilot)/i.test(who);
+    const list = (d.merged.nodes || []).filter((n) => n.number && n.mergedAt).map((n) => {
+      const mine = n.reviews.nodes.filter((r) => human(r.author?.login));
+      return {
+        repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, createdAt: n.createdAt, mergedAt: n.mergedAt,
+        additions: n.additions, deletions: n.deletions, reviewCount: mine.length,
+        changeRequests: mine.filter((r) => r.state === 'CHANGES_REQUESTED').length,
+        firstReviewAt: mine.map((r) => r.submittedAt).sort()[0] || null,
+      };
+    });
+    const given = (d.reviewed.nodes || []).filter((n) => n.number).flatMap((n) => n.reviews.nodes
+      .filter((r) => r.author?.login === login && Date.parse(r.submittedAt) >= range.from)
+      .map((r) => ({ repo: n.repository.nameWithOwner, number: n.number, submittedAt: r.submittedAt })));
+    const open = (d.open.nodes || []).filter((n) => n.number).map((n) => ({ repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, createdAt: n.createdAt, draft: n.isDraft }));
+    return Object.assign(list, { total: d.merged.issueCount, given, open });
+  };
+  const jiraOn = await direct.has('jira');
+  const [prs, tasks, wipTasks, entries] = await Promise.all([
+    guard('GitHub', mergedPrs()),
+    guard('Jira', jiraOn ? direct.jira.resolvedSince(day(range.from)) : Promise.resolve([])),
+    guard('Jira (en curso)', jiraOn ? direct.jira.inProgress() : Promise.resolve([])),
+    guard('Clockify', clockify.entries(range.from, range.to)),
+  ]);
+  // WIP counts what belongs to the active sprint: assigned to it, or due inside its dates
+  const cachedItems = (await readJsonFile('jira.json', { items: [] })).items || [];
+  const sprint = [...wipTasks, ...cachedItems].map((i) => i.sprint).find((sp) => sp?.state === 'active') || null;
+  const inSprint = (t) => t.sprint?.state === 'active' || (sprint && t.due && Date.parse(t.due) >= Date.parse(sprint.start || 0) && Date.parse(t.due) <= Date.parse(sprint.end || 8.64e15) + 86_400_000);
+  const sprintWip = sprint ? wipTasks.filter(inSprint) : wipTasks;
+  return { ...buildMetrics({ range, entries, prs, prsTotal: prs.total, tasks, ticketPattern: CONFIG.jira.ticketPattern,
+    reviewsGiven: prs.given || [], openPrs: prs.open || [], wipTasks: sprintWip, wipSprint: sprint?.name || '' }), warnings };
+};
+
+// Weekly history (12 weeks by default): hours, merged PRs and closed tasks over time. Slow, so cached.
+const trendsCache = new Map();
+const loadTrends = async (weeksParam, force = false) => {
+  const weeks = weeksFor(weeksParam);
+  const hit = trendsCache.get(weeks.length);
+  if (!force && hit && Date.now() - hit.at < 10 * 60_000) return hit.data;
+  const from = weeks[0].from; const to = weeks[weeks.length - 1].to;
+  const warnings = [];
+  const guard = (name, p) => p.catch((e) => { warnings.push(`${name}: ${e.message}`); return []; });
+  const mergedPrs = async () => {
+    const login = (await ghExec(['api', 'user', '--jq', '.login'])).trim();
+    // one search per week (100 PRs max each) keeps the history exact beyond a single page
+    const query = `query { ${weeks.map((w, i) => `w${i}: search(query: "is:pr author:${login} is:merged merged:${dayStr(w.from)}..${dayStr(w.to)}", type: ISSUE, first: 100) { nodes { ... on PullRequest { createdAt mergedAt } } }`).join('\n')} }`;
+    const d = JSON.parse(await ghExec(['api', 'graphql', '-f', `query=${query}`])).data;
+    return weeks.flatMap((_, i) => (d[`w${i}`]?.nodes || []).filter((n) => n.mergedAt));
+  };
+  const [prs, tasks, entries] = await Promise.all([
+    guard('GitHub', mergedPrs()),
+    guard('Jira', (await direct.has('jira')) ? direct.jira.resolvedSince(dayStr(from), 4) : Promise.resolve([])),
+    guard('Clockify', clockify.entriesBetween(from, to)),
+  ]);
+  if (tasks.length >= 400) warnings.push('Jira: se muestran las últimas 400 tareas cerradas; las semanas más viejas pueden estar incompletas.');
+  const data = { ...buildTrends({ weeks, entries, prs, tasks }), warnings };
+  trendsCache.set(weeks.length, { at: Date.now(), data });
+  return data;
+};
+
 // ------------------------------------------------------------------ Summary: standup / weekly
 
 const summaryCache = new Map();
@@ -1103,15 +1181,20 @@ const loadSummary = async (kind, force) => {
   const guard = (name, p) => p.catch((e) => { warnings.push(`${name}: ${e.message}`); return []; });
   const github = async () => {
     const login = (await ghExec(['api', 'user', '--jq', '.login'])).trim();
-    const pr = `... on PullRequest { number title url createdAt mergedAt additions deletions author { login } repository { nameWithOwner }`;
+    const pr = `... on PullRequest { number title url createdAt mergedAt updatedAt isDraft additions deletions author { login } repository { nameWithOwner }`;
     const query = `query {
       merged: search(query: "is:pr author:${login} is:merged merged:>=${day(w.from)}", type: ISSUE, first: 50) { nodes { ${pr} } } }
       reviewed: search(query: "is:pr reviewed-by:${login} -author:${login} updated:>=${day(w.from)}", type: ISSUE, first: 50) { nodes { ${pr}
         reviews(last: 20) { nodes { submittedAt author { login } } } } } }
+      open: search(query: "is:pr is:open author:${login}", type: ISSUE, first: 30) { nodes { ${pr} } } }
+      requested: search(query: "is:pr is:open review-requested:${login}", type: ISSUE, first: 30) { nodes { ${pr} } } }
     }`;
     const d = JSON.parse(await ghExec(['api', 'graphql', '-f', `query=${query}`])).data;
     const repoOf = (n) => n.repository.nameWithOwner;
+    const brief = (n) => ({ repo: repoOf(n), number: n.number, title: n.title, url: n.url, author: n.author?.login || '', draft: n.isDraft, updatedAt: n.updatedAt });
     return {
+      open: d.open.nodes.filter((n) => n.number).map(brief),
+      requested: d.requested.nodes.filter((n) => n.number).map(brief),
       merged: d.merged.nodes.filter((n) => n.number).map((n) => ({ repo: repoOf(n), number: n.number, title: n.title, url: n.url,
         createdAt: n.createdAt, mergedAt: n.mergedAt, additions: n.additions, deletions: n.deletions })),
       reviewed: d.reviewed.nodes.filter((n) => n.number).map((n) => ({ n, mine: n.reviews.nodes.filter((r) => r.author?.login === login
@@ -1119,13 +1202,17 @@ const loadSummary = async (kind, force) => {
         .filter((x) => x.mine).map(({ n, mine }) => ({ repo: repoOf(n), number: n.number, title: n.title, url: n.url, author: n.author?.login || '', reviewedAt: mine })),
     };
   };
-  const [gh, tasks, entries] = await Promise.all([
-    github().catch((e) => { warnings.push(`GitHub: ${e.message}`); return { merged: [], reviewed: [] }; }),
-    guard('Jira', (await direct.has('jira')) ? direct.jira.changedByMe(w.from, w.to) : Promise.resolve([])),
+  const hasJira = await direct.has('jira');
+  const [gh, tasks, open, entries] = await Promise.all([
+    github().catch((e) => { warnings.push(`GitHub: ${e.message}`); return { merged: [], reviewed: [], open: [], requested: [] }; }),
+    guard('Jira', hasJira ? direct.jira.changedByMe(w.from, w.to) : Promise.resolve([])),
+    guard('Jira (abiertas)', hasJira ? direct.jira.open() : Promise.resolve([])),
     guard('Clockify', clockify.entries(w.from, w.to)),
   ]);
-  const data = { ...buildSummary({ window: w, merged: gh.merged, reviewed: gh.reviewed, tasks, entries, ticketPattern: CONFIG.jira.ticketPattern }), warnings };
+  const data = { ...buildSummary({ window: w, merged: gh.merged, reviewed: gh.reviewed, tasks, open, openPrs: gh.open, reviewRequests: gh.requested, entries, ticketPattern: CONFIG.jira.ticketPattern }), warnings };
   data.markdown = toMarkdown(data);
+  data.script = toScript(data);
+  data.scriptSections = scriptSections(data);
   summaryCache.set(w.kind, { at: Date.now(), data });
   return data;
 };
@@ -1332,7 +1419,8 @@ const sendSlackReply = async (id, text) => {
 const loadSlack = async () => {
   const cache = await readJsonFile('slack.json', { fetchedAt: null, items: [] });
   const dismissed = new Set(await readJsonFile('dismissed.json', []));
-  return { ...cache, items: cache.items.filter((i) => !dismissed.has(i.id)).map((i) => ({ ...i, permalink: /^https:\/\/[\w.-]+\/archives\/[CDG][A-Z0-9]{8,}\/p\d{16}/.test(i.permalink || '') && !String(i.permalink).includes('000000') ? i.permalink : '' })), ...slackState,
+  const bulk = await readJsonFile('dismissed-bulk.json', null);
+  return { ...cache, lastBulk: Array.isArray(bulk?.ids) ? bulk.ids.length : 0, items: cache.items.filter((i) => !dismissed.has(i.id)).map((i) => ({ ...i, permalink: /^https:\/\/[\w.-]+\/archives\/[CDG][A-Z0-9]{8,}\/p\d{16}/.test(i.permalink || '') && !String(i.permalink).includes('000000') ? i.permalink : '' })), ...slackState,
     source: (await direct.has('slack')) ? 'api' : 'claude' };
 };
 
@@ -1478,8 +1566,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, { ok: true, link: await draftSlackReply(String(id), body) });
     }
     if (req.method === 'POST' && p === '/api/deploy-check') return json(res, await deployCheck((await readBody(req)).key));
+    if (req.method === 'GET' && p === '/api/metrics/trends') return json(res, await loadTrends(Number(url.searchParams.get('weeks')), url.searchParams.get('refresh') === '1'));
+    if (req.method === 'GET' && p === '/api/metrics') return json(res, await loadMetrics(Number(url.searchParams.get('days'))));
     if (req.method === 'GET' && p === '/api/health') return json(res, await loadHealth(url.searchParams.get('refresh') === '1'));
-    if (req.method === 'GET' && p === '/api/summary') return json(res, await loadSummary(url.searchParams.get('kind') === 'week' ? 'week' : 'standup', url.searchParams.get('refresh') === '1'));
+    if (req.method === 'GET' && p === '/api/summary') return json(res, await loadSummary(['week', 'daily'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'standup', url.searchParams.get('refresh') === '1'));
     if (req.method === 'GET' && p === '/api/notifications') return json(res, await notifier.list());
     if (req.method === 'POST' && p === '/api/notifications/read') {
       const { ids } = await readBody(req);
@@ -1559,6 +1649,24 @@ const server = http.createServer(async (req, res) => {
       await writeJsonFile('dismissed.json', [...new Set([...dismissed, id])]);
       await notifier.markRead([`slack:${id}`]); // también sale de pendientes en 🔔
       return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/slack/dismiss-all') {
+      const dismissed = await readJsonFile('dismissed.json', []);
+      const ids = (await loadSlack()).items.map((i) => i.id);
+      if (!ids.length) return json(res, { ok: true, count: 0 });
+      await writeJsonFile('dismissed.json', [...new Set([...dismissed, ...ids])]);
+      await writeJsonFile('dismissed-bulk.json', { at: new Date().toISOString(), ids }); // only the latest bulk can be undone
+      await notifier.markRead(ids.map((id) => `slack:${id}`));
+      return json(res, { ok: true, count: ids.length });
+    }
+    if (req.method === 'POST' && p === '/api/slack/undo-dismiss') {
+      const bulk = await readJsonFile('dismissed-bulk.json', null);
+      const ids = new Set(Array.isArray(bulk?.ids) ? bulk.ids : []);
+      if (!ids.size) return json(res, { error: 'No hay un descarte masivo para deshacer' }, 400);
+      const dismissed = await readJsonFile('dismissed.json', []);
+      await writeJsonFile('dismissed.json', dismissed.filter((id) => !ids.has(id)));
+      await writeJsonFile('dismissed-bulk.json', null);
+      return json(res, { ok: true, count: ids.size });
     }
     if (req.method === 'GET' && !p.startsWith('/api/')) return await serveStatic(req, res, p);
     json(res, { error: 'not found' }, 404);

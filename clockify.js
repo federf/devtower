@@ -109,5 +109,17 @@ export const createClockify = ({ readSecret, ticketPattern, fetchImpl = fetch, n
   const entries = async (from, to) => (await loadHistory()).entries.map(shape)
     .filter((e) => Date.parse(e.start) >= from && Date.parse(e.start) <= to);
 
-  return { status, start, stop, taskEntry, entries, forget };
+  // every entry that started inside [from, to], paged: for long-range trends beyond the 28-day history
+  const entriesBetween = async (from, to) => {
+    const u = await user();
+    const out = [];
+    for (let page = 1; page <= 8; page++) {
+      const batch = await call(`/workspaces/${u.ws}/user/${u.id}/time-entries?start=${iso(from)}&end=${iso(to)}&page=${page}&page-size=500&hydrated=true`);
+      out.push(...batch);
+      if (batch.length < 500) break;
+    }
+    return out.map(shape).filter((e) => e.start);
+  };
+
+  return { status, start, stop, taskEntry, entries, entriesBetween, forget };
 };

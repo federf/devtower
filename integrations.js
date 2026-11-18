@@ -3,7 +3,8 @@ import { readSecret as storedSecret } from './secrets.js';
 // Direct Jira/Slack access with personal tokens (see secrets.js for where they are stored).
 // No Claude, no quota: used for background refresh and explicit writes.
 
-const JIRA_FIELDS = ['summary', 'status', 'priority', 'issuetype', 'updated', 'parent', 'duedate', 'assignee'];
+const DONE_STATUS = /^(listo|done|cerrad[ao]|resuelt[ao]|closed|resolved|finalizad[ao])$/i;
+const JIRA_FIELDS = ['summary', 'status', 'priority', 'issuetype', 'updated', 'parent', 'duedate', 'assignee', 'created', 'resolutiondate'];
 const LOOKBACK_DAYS = 7;
 const MAX_CHECKS = 25;
 
@@ -91,16 +92,23 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
       || open.sort((a, b) => Date.parse(a.startDate || 8.64e15) - Date.parse(b.startDate || 8.64e15))[0];
     return pick ? sprintInfo(pick) : null;
   };
-  const issues = async (jql, { changelog = false } = {}) => {
+  const issues = async (jql, { changelog = false, pages = 1 } = {}) => {
     const field = await sprintField();
-    const data = await jira('/rest/api/3/search/jql', { method: 'POST', body: {
-      jql, maxResults: 100, fields: [...JIRA_FIELDS, ...(field ? [field] : [])], ...(changelog ? { expand: 'changelog' } : {}),
-    } });
-    return (data.issues || []).map(({ key, fields: f, changelog: log }) => ({
+    const found = [];
+    let nextPageToken;
+    for (let page = 0; page < pages; page++) {
+      const data = await jira('/rest/api/3/search/jql', { method: 'POST', body: {
+        jql, maxResults: 100, fields: [...JIRA_FIELDS, ...(field ? [field] : [])], ...(changelog ? { expand: 'changelog' } : {}), ...(nextPageToken ? { nextPageToken } : {}),
+      } });
+      found.push(...(data.issues || []));
+      nextPageToken = data.nextPageToken;
+      if (!nextPageToken) break;
+    }
+    return found.map(({ key, fields: f, changelog: log }) => ({
       ...(changelog ? { changelog: log?.histories || [] } : {}),
       key, summary: f.summary || '', status: f.status?.name || '', statusId: f.status?.id || '', statusCategory: f.status?.statusCategory?.key || '',
       priority: f.priority?.name || '', type: f.issuetype?.name || '', updated: f.updated || '',
-      due: f.duedate || '', assignee: f.assignee?.displayName || '', parent: f.parent?.key || '', url: `${JIRA_SITE}/browse/${key}`,
+      due: f.duedate || '', created: f.created || '', resolved: f.resolutiondate || '', assignee: f.assignee?.displayName || '', parent: f.parent?.key || '', url: `${JIRA_SITE}/browse/${key}`,
       sprint: field ? currentSprint(f[field]) : null,
     }));
   };
@@ -178,6 +186,23 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
       const last = moves[moves.length - 1];
       return { ...issue, movedAt: last?.at || issue.updated, fromStatus: moves[0]?.from || '', toStatus: last?.to || issue.status };
     });
+  };
+  // tasks I closed since a date, with when I first moved them to an explicit "in progress" status
+  const resolvedSince = async (since, pages = 1) => {
+    const list = await issues(`assignee = currentUser() AND statusCategory = Done AND resolved >= "${since}" ORDER BY resolved DESC`, { changelog: true, pages });
+    return list.map(({ changelog, ...t }) => {
+      const started = (changelog || []).flatMap((h) => h.items.filter((i) => i.field === 'status' && /^(en curso|en progreso|in progress)$/i.test(i.toString || '')).map(() => h.created))
+        .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+      const moves = (changelog || []).flatMap((h) => h.items.filter((i) => i.field === 'status').map((i) => ({ at: h.created, from: i.fromString || '', to: i.toString || '' })))
+        .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      // wall-clock hours per status, from creation to resolution
+      const stages = {};
+      let since = t.created; let current = moves[0]?.from || t.status;
+      for (const m of moves) { stages[current] = (stages[current] || 0) + (Date.parse(m.at) - Date.parse(since)) / 3_600_000; since = m.at; current = m.to; }
+      if (t.resolved) stages[current] = (stages[current] || 0) + Math.max(0, Date.parse(t.resolved) - Date.parse(since)) / 3_600_000;
+      const reopened = moves.filter((m) => DONE_STATUS.test(m.from) && !DONE_STATUS.test(m.to)).length;
+      return { key: t.key, summary: t.summary, url: t.url, created: t.created, started: started || null, resolved: t.resolved, stages, reopened };
+    }).filter((t) => t.resolved);
   };
   const jiraMe = async () => (myself ??= await jira('/rest/api/3/myself').then((m) => ({ accountId: m.accountId, name: m.displayName })));
   const person = (u) => (u ? { accountId: u.accountId, name: u.displayName } : null);
@@ -338,7 +363,7 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
   return {
     has,
     forget,
-    jira: { search: searchJira, changedByMe, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
+    jira: { search: searchJira, resolvedSince, inProgress: () => issues('assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC'), open: () => issues('assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'), changedByMe, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
     slack: { pending: pendingSlack, send: sendSlack, recent: recentSlack },
   };
 };

@@ -9,7 +9,7 @@ const median = (xs) => {
   return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null;
 };
 
-// standup looks back to the last working day (Monday → Friday); week is the last 7 days
+// standup and daily look back to the last working day (Monday → Friday); week is the last 7 days
 export const windowFor = (kind, now = Date.now()) => {
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
@@ -17,21 +17,45 @@ export const windowFor = (kind, now = Date.now()) => {
   const back = [2, 3, 1, 1, 1, 1, 1][day.getDay()]; // Sun→Fri, Mon→Fri, otherwise yesterday
   const from = day.getTime() - back * DAY_MS;
   const when = new Date(from);
-  return { kind: 'standup', from, to: now, label: back === 1 ? 'Ayer' : `Desde el ${DAYS[when.getDay()]}` };
+  return { kind: kind === 'daily' ? 'daily' : 'standup', from, to: now, label: back === 1 ? 'Ayer' : `Desde el ${DAYS[when.getDay()]}` };
 };
 
 const fmtH = (h) => (h >= 1 ? `${round1(h)} h` : `${Math.round(h * 60)} min`);
 
 const entryHours = (e, to) => (Math.min(Date.parse(e.end || new Date(to)), to) - Math.max(Date.parse(e.start), 0)) / 3_600_000;
 
-export const buildSummary = ({ window: w, merged = [], reviewed = [], tasks = [], entries = [], ticketPattern = '' }) => {
+// only a status literally named "En curso" / "In progress" counts as started; "Seleccionado para desarrollo" is not
+const IN_PROGRESS = /^(en curso|en progreso|in progress)$/i;
+const DUE_WINDOW_DAYS = 14;
+
+// open Jira tasks bucketed for the daily: started, waiting on someone, and those with a due date that matter now
+// (created inside the window, or due between a week ago and DUE_WINDOW_DAYS ahead; years-old overdue ones are noise)
+export const dailyTasks = (open, w) => {
+  const day = new Date(w.to); day.setHours(0, 0, 0, 0);
+  const iso = (ms) => `${new Date(ms).getFullYear()}-${String(new Date(ms).getMonth() + 1).padStart(2, '0')}-${String(new Date(ms).getDate()).padStart(2, '0')}`;
+  const today = iso(day.getTime());
+  const inProgress = open.filter((t) => IN_PROGRESS.test(t.status));
+  const waiting = open.filter((t) => t.statusCategory === 'indeterminate' && !IN_PROGRESS.test(t.status));
+  const due = open.filter((t) => t.due).map((t) => ({ ...t, fresh: Date.parse(t.created) >= w.from, dueToday: t.due === today, overdue: t.due < today }))
+    .filter((t) => t.fresh || (t.due >= iso(day.getTime() - 7 * DAY_MS) && t.due <= iso(day.getTime() + DUE_WINDOW_DAYS * DAY_MS)))
+    .sort((a, b) => a.due.localeCompare(b.due));
+  return { inProgress, waiting, due };
+};
+
+export const buildSummary = ({ window: w, merged = [], reviewed = [], tasks = [], entries = [], open = [], openPrs = [], reviewRequests = [], ticketPattern = '' }) => {
   const TICKET = ticketPattern ? new RegExp(`\\b(?:${ticketPattern})\\b`) : null;
   const keyOf = (text) => (TICKET && TICKET.exec(text || '')?.[0]) || null;
   const inWindow = (ts) => Date.parse(ts) >= w.from && Date.parse(ts) <= w.to;
 
   const prs = merged.filter((p) => inWindow(p.mergedAt)).map((p) => ({ ...p, ticket: keyOf(p.title) }));
-  const logged = entries.filter((e) => e.start && Date.parse(e.start) >= w.from && Date.parse(e.start) <= w.to)
-    .map((e) => ({ ...e, hours: entryHours(e, w.to), ticket: e.ticket || keyOf(e.description) })).filter((e) => e.hours > 0);
+  // standup/daily are about the days before today, so today's Clockify entries must not inflate "Ayer"
+  const hoursTo = w.kind === 'week' ? w.to : Math.min(w.to, new Date(w.to).setHours(0, 0, 0, 0));
+  const logged = entries.filter((e) => e.start && Date.parse(e.start) >= w.from && Date.parse(e.start) < Math.max(hoursTo, w.from + 1))
+    .map((e) => ({ ...e, hours: entryHours(e, hoursTo), ticket: e.ticket || keyOf(e.description) })).filter((e) => e.hours > 0);
+
+  // the daily only covers what I'm actually on: tasks in the active sprint, with Clockify time in the window,
+  // or flash tasks (due date, created inside the window) that were just handed to me
+  const loggedKeys = new Set(logged.map((e) => e.ticket).filter(Boolean));
 
   const byProject = new Map();
   logged.forEach((e) => byProject.set(e.project || 'Sin proyecto', (byProject.get(e.project || 'Sin proyecto') || 0) + e.hours));
@@ -85,9 +109,10 @@ export const buildSummary = ({ window: w, merged = [], reviewed = [], tasks = []
     reviewed,
     tasks: {
       done: tasks.filter((t) => t.statusCategory === 'done'),
-      inProgress: tasks.filter((t) => t.statusCategory === 'indeterminate'),
       other: tasks.filter((t) => !['done', 'indeterminate'].includes(t.statusCategory)),
+      ...dailyTasks(open.filter((t) => t.sprint?.state === 'active' || loggedKeys.has(t.key) || (t.due && Date.parse(t.created) >= w.from)), w),
     },
+    openPrs, reviewRequests,
     tickets,
     hours: { total: round1(total), byProject: [...byProject].map(([project, h]) => ({ project, hours: round1(h) })).sort((a, b) => b.hours - a.hours),
       unticketed: round1(logged.filter((e) => !e.ticket).reduce((s, e) => s + e.hours, 0)) },
@@ -97,7 +122,8 @@ export const buildSummary = ({ window: w, merged = [], reviewed = [], tasks = []
 
 // Slack-flavoured markdown, ready to paste
 export const toMarkdown = (s) => {
-  const out = [`*${s.kind === 'week' ? 'Resumen semanal' : 'Standup'}* · ${s.label}`, s.headline];
+  const out = [`*${{ week: 'Resumen semanal', daily: 'Daily brief' }[s.kind] || 'Standup'}* · ${s.label}`, s.headline];
+  const daily = s.kind === 'daily';
   const { prs } = s.delivered;
   if (prs.length) {
     out.push('', `*Entregado* (${prs.length} PR${prs.length === 1 ? '' : 's'} mergeado${prs.length === 1 ? '' : 's'})`);
@@ -109,7 +135,23 @@ export const toMarkdown = (s) => {
   }
   if (s.tasks.inProgress.length) {
     out.push('', '*En curso*');
-    s.tasks.inProgress.forEach((t) => out.push(`• <${t.url}|${t.key}> ${t.summary} — ${t.status}`));
+    s.tasks.inProgress.forEach((t) => out.push(`• <${t.url}|${t.key}> ${t.summary}`));
+  }
+  if (daily && s.tasks.waiting.length) {
+    out.push('', '*Esperando*');
+    s.tasks.waiting.forEach((t) => out.push(`• <${t.url}|${t.key}> ${t.summary} — ${t.status}`));
+  }
+  if (daily && s.tasks.due.length) {
+    out.push('', '*Con vencimiento*');
+    s.tasks.due.forEach((t) => out.push(`• <${t.url}|${t.key}> ${t.summary} — ${t.dueToday ? 'vence hoy' : t.overdue ? `venció ${t.due}` : `vence ${t.due}`}${t.fresh ? ' (nueva)' : ''}`));
+  }
+  if (daily && s.openPrs.length) {
+    out.push('', '*PRs abiertos*');
+    s.openPrs.forEach((p) => out.push(`• ${p.title} (<${p.url}|${p.repo.split('/').pop()}#${p.number}>)`));
+  }
+  if (daily && s.reviewRequests.length) {
+    out.push('', '*Reviews pendientes*');
+    s.reviewRequests.forEach((p) => out.push(`• ${p.title} (<${p.url}|${p.repo.split('/').pop()}#${p.number}>)`));
   }
   if (s.reviewed.length) {
     out.push('', `*Revisiones* (${s.reviewed.length})`);
@@ -117,5 +159,48 @@ export const toMarkdown = (s) => {
   }
   if (s.hours.total) out.push('', `*Horas* ${fmtH(s.hours.total)}: ${s.hours.byProject.map((p) => `${p.project} ${fmtH(p.hours)}`).join(' · ')}`);
   if (s.kind === 'week' && s.delivered.leadHours != null) out.push(`Mediana abrir → merge: ${fmtH(s.delivered.leadHours)}`);
+  return out.join('\n');
+};
+
+// first-person talking points to read out in the daily: sections → blocks (a lead line + bullets).
+// Bullets carry the ticket key / url so the view can link them; toScript flattens the same data to plain text.
+export const scriptSections = (s) => {
+  const strip = (t) => t.replace(/^\s*\[[^\]]+\]\s*-?\s*/, '');
+  const pr = (p) => ({ text: strip(p.title), ref: `${p.repo.split('/').pop()}#${p.number}`, url: p.url });
+  const task = (t, note) => ({ text: t.summary, ref: t.key, url: t.url, ...(note ? { note } : {}) });
+  const dueNote = (t) => (t.dueToday ? 'vence hoy' : t.overdue ? `venció ${t.due}` : `vence ${t.due}`);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const block = (lead, items = [], tone = '', pie = false) => ({ lead, items, tone, pie });
+
+  const yesterday = [];
+  const { prs } = s.delivered;
+  if (prs.length) yesterday.push(block(`Mergeé ${plural(prs.length, 'PR', 'PRs')}`, prs.map(pr), 'ok'));
+  if (s.tasks.done.length) yesterday.push(block('Cerré', s.tasks.done.map((t) => task(t)), 'ok'));
+  if (s.reviewed.length) yesterday.push(block(`Hice ${plural(s.reviewed.length, 'review', 'reviews')}`));
+  if (s.hours.total) yesterday.push(block(`Registré ${fmtH(s.hours.total)}`, s.hours.byProject.map((p) => ({ text: p.project, note: fmtH(p.hours), value: p.hours })), '', true));
+
+  const today = [];
+  if (s.tasks.inProgress.length) today.push(block('Estoy en', s.tasks.inProgress.map((t) => task(t)), 'info'));
+  if (s.openPrs.length) today.push(block('Tengo abiertos', s.openPrs.map(pr)));
+  if (s.tasks.waiting.length) today.push(block('Esperando', s.tasks.waiting.map((t) => task(t, t.status))));
+
+  const pending = [];
+  if (s.reviewRequests.length) pending.push(block('Reviews pendientes', s.reviewRequests.map(pr), 'warn'));
+  if (s.tasks.due.length) pending.push(block('Con fecha', s.tasks.due.map((t) => task(t, dueNote(t))), 'warn'));
+
+  return [
+    { title: 'Ayer', blocks: yesterday.length ? yesterday : [block('Sin actividad registrada')] },
+    { title: 'Hoy', blocks: today.length ? today : [block('Nada en curso explícito')] },
+    ...(pending.length ? [{ title: 'Pendientes', blocks: pending }] : []),
+  ];
+};
+
+export const toScript = (s) => {
+  const line = (i) => `  • ${i.ref ? `${i.ref} ` : ''}${i.text}${i.note ? ` (${i.note})` : ''}`;
+  const out = [`DAILY · ${s.label}`];
+  scriptSections(s).forEach((sec) => {
+    out.push('', sec.title.toUpperCase());
+    sec.blocks.forEach((b) => out.push(b.items.length ? `${b.lead}:` : `${b.lead}.`, ...b.items.map(line)));
+  });
   return out.join('\n');
 };

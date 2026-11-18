@@ -299,7 +299,8 @@ const render = () => {
   if (document.activeElement?.matches?.('.reply textarea, .settings-view input, .settings-view select')
     || document.querySelector('.kcard.dragging')) { state.dirty = true; return; }
   $$('#rail .nav[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === state.view));
-  $('#view-title').textContent = { today: 'Hoy', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', 'work-items': 'Trabajos', summary: 'Resumen', settings: 'Configuración' }[state.view] || 'devtower';
+  $('#view-title').textContent = { today: 'Hoy', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', 'work-items': 'Trabajos', summary: 'Resumen', metrics: 'Métricas', settings: 'Configuración' }[state.view] || 'devtower';
+  document.body.dataset.view = state.view;
   syncRangeUi();
   renderStats();
   const c = $('#content');
@@ -367,7 +368,7 @@ const render = () => {
       ${state.prTab === 'health' ? (window.cockpit.renderHealth?.() ?? '') : `<div class="list-wide">${views.prs(state.prTab)}</div>`}`;
   } else {
     c.innerHTML = `<div class="viewbar"><span class="note">${state.slack.source === 'api' ? 'DMs, menciones e hilos sin respuesta tuya · últimos 7 días' : 'Lo lee Claude con tu conector de Slack (solo lectura)'}</span>
-      <span class="spacer"></span>${(window.cockpit.sourceBtn?.('slack', 'Slack', state.slack.fetchedAt, state.slack.running) ?? '')}</div><div class="list-wide">${views.slack()}</div>`;
+      <span class="spacer"></span>${state.slack.lastBulk ? `<button class="btn sm" data-act="slack-undo" title="Vuelve a mostrar los mensajes del último descarte masivo">↩ Deshacer descarte (${state.slack.lastBulk})</button>` : ''}${state.slack.items.length ? `<button class="btn sm ghost" data-act="slack-dismiss-all" title="Oculta todos los pendientes de la lista. No modifica nada en Slack. Podés deshacerlo">Descartar todo (${state.slack.items.length})</button>` : ''}${(window.cockpit.sourceBtn?.('slack', 'Slack', state.slack.fetchedAt, state.slack.running) ?? '')}</div><div class="list-wide">${views.slack()}</div>`;
   }
   c.scrollTop = prev;
   applyKb();
@@ -986,6 +987,8 @@ document.addEventListener('click', async (e) => {
     case 'slack-suggest': return slackSuggest(card.dataset.id);
     case 'slack-draft': return slackDraft(card.dataset.id);
     case 'slack-send': return slackSend(card.dataset.id);
+    case 'slack-dismiss-all': { const r = await (await api('/api/slack/dismiss-all', {})).json(); await loadSlack(); return toast(`${r.count} descartados · podés deshacerlo`); }
+    case 'slack-undo': { const r = await (await api('/api/slack/undo-dismiss', {})).json(); await loadSlack(); return toast(r.error || `${r.count} restaurados`); }
     case 'slack-dismiss': await api('/api/slack/dismiss', { id: card.dataset.id }); return loadSlack();
     default:
   }
@@ -1015,6 +1018,7 @@ $('#search').addEventListener('input', (e) => {
 $('#refresh').addEventListener('click', async () => {
   if (state.view === 'work-items') return window.cockpit.loadWorkItems?.();
   if (state.view === 'summary') return window.cockpit.refreshSummary?.();
+  if (state.view === 'metrics') return window.cockpit.refreshMetrics?.();
   loadThreads(); loadPrs(true);
   if (state.view === 'slack') { await api('/api/slack/refresh', {}); state.slack.running = true; render(); pollSlack(); }
   if (state.view === 'tasks') window.cockpit.refreshJira?.();
@@ -1441,7 +1445,7 @@ const stepThread = (dir) => {
   if (next) openThread(next.id);
 };
 
-const VIEWS = ['today', 'threads', 'tasks', 'prs', 'slack', 'work-items', 'summary'];
+const VIEWS = ['today', 'threads', 'tasks', 'prs', 'slack', 'work-items', 'summary', 'metrics'];
 const stepView = (dir) => setView(VIEWS[(VIEWS.indexOf(state.view) + dir + VIEWS.length) % VIEWS.length]);
 const stepPrTab = (dir) => {
   const tabs = ['mine', 'toReview', 'reviewed'];
