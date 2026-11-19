@@ -63,16 +63,16 @@ const drop = async (key, col) => {
 const clear = () => document.querySelectorAll('.kcol.drop, .kcard.dragging, .kcard.drop-before, .kcard.drop-after').forEach((n) => n.classList.remove('drop', 'dragging', 'drop-before', 'drop-after'));
 
 // same column: the card under the pointer and whether the dragged one goes above or below it
-const target = (e, col) => {
-  const cards = [...col.querySelectorAll('.kcard[data-key]')].filter((c) => c.dataset.key !== drag.key);
+const target = (e, col, d = drag) => {
+  const cards = [...col.querySelectorAll('.kcard[data-key]')].filter((c) => c.dataset.key !== d.key);
   const after = cards.find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
   return after ? { card: after, before: true } : cards.length ? { card: cards.at(-1), before: false } : null;
 };
-const reorder = (col, e) => {
-  const keys = [...col.querySelectorAll('.kcard[data-key]')].map((c) => c.dataset.key).filter((k) => k !== drag.key);
-  const t = target(e, col);
+const reorder = (col, e, d = drag) => {
+  const keys = [...col.querySelectorAll('.kcard[data-key]')].map((c) => c.dataset.key).filter((k) => k !== d.key);
+  const t = target(e, col, d);
   const at = t ? keys.indexOf(t.card.dataset.key) + (t.before ? 0 : 1) : 0;
-  keys.splice(at, 0, drag.key);
+  keys.splice(at, 0, d.key);
   state.taskOrder = [...keys, ...state.taskOrder.filter((k) => !keys.includes(k))].slice(0, 500);
   C.store.set('taskOrder', state.taskOrder);
   C.render();
@@ -103,7 +103,8 @@ document.addEventListener('drop', (e) => {
   const col = drag && e.target.closest?.('.kcol[data-col]');
   if (!col) return;
   e.preventDefault();
-  if (Number(col.dataset.col) === drag.from) { reorder(col, e); drag = null; clear(); return; }
+  // clear first: render() skips while a card still has .dragging, so the new order would not show
+  if (Number(col.dataset.col) === drag.from) { const same = drag; clear(); reorder(col, e, same); drag = null; return; }
   const { key } = drag;
   drag = null;
   clear();
