@@ -172,7 +172,7 @@ const hl = (text) => {
 const threadActionButtons = (thread) => {
   const disabled = thread.running || state.threadMutations.has(thread.id) ? 'disabled' : '';
   const attrs = `data-id="${esc(thread.id)}" ${disabled}`;
-  return `<button class="btn sm ghost" data-act="work-from-thread" data-id="${esc(thread.id)}" title="Crear o vincular un trabajo local, sin consumir IA">◇ Trabajo</button><button class="btn sm ghost" data-act="thread-${thread.archived ? 'restore' : 'archive'}" ${attrs}
+  return `<button class="btn sm ghost" data-act="thread-${thread.archived ? 'restore' : 'archive'}" ${attrs}
     title="${thread.archived ? 'Devolver este hilo a Activos' : 'Ocultar de Hoy y Tareas sin borrar el historial'}">${thread.archived ? '↩ Restaurar' : '▣ Archivar'}</button>
     <button class="btn sm ghost danger" data-act="thread-delete" ${attrs}
     title="Borrar permanentemente el historial original de Claude; requiere confirmación">⌫ Borrar</button>`;
@@ -299,7 +299,7 @@ const render = () => {
   if (document.activeElement?.matches?.('.reply textarea, .settings-view input, .settings-view select')
     || document.querySelector('.kcard.dragging')) { state.dirty = true; return; }
   $$('#rail .nav[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === state.view));
-  $('#view-title').textContent = { today: 'Hoy', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', 'work-items': 'Trabajos', summary: 'Resumen', metrics: 'Métricas', settings: 'Configuración' }[state.view] || 'devtower';
+  $('#view-title').textContent = { today: 'Hoy', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', summary: 'Resumen', metrics: 'Métricas', settings: 'Configuración' }[state.view] || 'devtower';
   document.body.dataset.view = state.view;
   syncRangeUi();
   renderStats();
@@ -1001,7 +1001,7 @@ $('#search').addEventListener('input', (e) => {
   state.q = e.target.value.trim();
   render();
   clearTimeout(searchTimer);
-  if (state.q.length < 2 || state.view === 'work-items') { state.hits = null; return; }
+  if (state.q.length < 2) { state.hits = null; return; }
   searchTimer = setTimeout(async () => {
     const q = state.q;
     const visibility = state.threadFilter;
@@ -1016,7 +1016,6 @@ $('#search').addEventListener('input', (e) => {
   }, 250);
 });
 $('#refresh').addEventListener('click', async () => {
-  if (state.view === 'work-items') return window.cockpit.loadWorkItems?.();
   if (state.view === 'summary') return window.cockpit.refreshSummary?.();
   if (state.view === 'metrics') return window.cockpit.refreshMetrics?.();
   loadThreads(); loadPrs(true);
@@ -1311,7 +1310,7 @@ deleteDialog.addEventListener('click', async (event) => {
 });
 
 const SHORTCUTS = [
-  ['Navegación', [['⌥B · ⌥H · ⌥T · ⌥R · ⌥S', 'Hoy · Hilos · Tareas · PRs · Slack'], ['⌥G', 'Trabajos locales'], ['⌘K', 'Accesos rápidos: vistas, links, tickets'], ['/', 'Buscar'], ['⌥← / ⌥→  ó  [ / ]', 'Sección anterior / siguiente'], ['J / K  ó  ↑ / ↓', 'Moverse por las tarjetas de la lista'], ['↵  ·  O', 'Acción principal de la tarjeta · abrir su link'], ['← / →', 'Cambiar de pestaña dentro de PRs'], ['⌘B', 'Mostrar / ocultar el chat'], ['⌘⇧L', 'Tema claro / oscuro'], ['⌘⇧R', 'Actualizar datos']]],
+  ['Navegación', [['⌥B · ⌥H · ⌥T · ⌥R · ⌥S', 'Hoy · Hilos · Tareas · PRs · Slack'], ['⌘K', 'Accesos rápidos: vistas, links, tickets'], ['/', 'Buscar'], ['⌥← / ⌥→  ó  [ / ]', 'Sección anterior / siguiente'], ['J / K  ó  ↑ / ↓', 'Moverse por las tarjetas de la lista'], ['↵  ·  O', 'Acción principal de la tarjeta · abrir su link'], ['← / →', 'Cambiar de pestaña dentro de PRs'], ['⌘B', 'Mostrar / ocultar el chat'], ['⌘⇧L', 'Tema claro / oscuro'], ['⌘⇧R', 'Actualizar datos']]],
   ['Hilos y pestañas', [['⌥N', 'Nuevo hilo'], ['⌥W', 'Cerrar pestaña'], ['⌥[  /  ⌥]', 'Pestaña anterior / siguiente'], ['⌥1 – ⌥9', 'Ir a la pestaña N'], ['⌥↑  /  ⌥↓', 'Hilo anterior / siguiente (por recencia)'], ['⌘P  ó  ⌘O', 'Ir a un hilo (buscador rápido)'], ['⌥L', 'Ir al mensaje']]],
   ['Mensaje', [['↵', 'Enviar'], ['⇧↵', 'Nueva línea'], ['Esc', 'Detener respuesta / cerrar menús'], ['↑  /  ↓', 'Mensajes anteriores (con el campo vacío)'], ['⇧Tab', 'Rotar modo de permisos'], ['⌥P', 'Rotar modelo'], ['⌥E', 'Rotar esfuerzo'], ['⌥U', 'Adjuntar imagen'], ['⌥,', 'Opciones avanzadas'], ['/  ·  @', 'Comandos y skills · archivos']]],
   ['General', [['⌘↑  /  ⌘↓', 'Inicio / fin de la conversación'], ['?  ó  ⌘/', 'Esta ayuda']]],
@@ -1445,7 +1444,7 @@ const stepThread = (dir) => {
   if (next) openThread(next.id);
 };
 
-const VIEWS = ['today', 'threads', 'tasks', 'prs', 'slack', 'work-items', 'summary', 'metrics'];
+const VIEWS = ['today', 'threads', 'tasks', 'prs', 'slack', 'summary', 'metrics'];
 const stepView = (dir) => setView(VIEWS[(VIEWS.indexOf(state.view) + dir + VIEWS.length) % VIEWS.length]);
 const stepPrTab = (dir) => {
   const tabs = ['mine', 'toReview', 'reviewed'];
@@ -1525,7 +1524,6 @@ document.addEventListener('keydown', (e) => {
       KeyH: () => setView('threads'),
       KeyR: () => setView('prs'),
       KeyS: () => setView('slack'),
-      KeyG: () => setView('work-items'),
       BracketLeft: () => cycleTab(-1),
       BracketRight: () => cycleTab(1),
     }[e.code];

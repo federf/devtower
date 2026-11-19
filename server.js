@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { createThreadLifecycle } from './thread-lifecycle.js';
 import { describeClaudeFailure, parseClaudeResponse } from './claude-errors.js';
 import { createLiveReload } from './live-reload.js';
-import { createWorkItems } from './work-items.js';
 import { createIntegrations } from './integrations.js';
 import { CONFIG_DIR, loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
@@ -1457,51 +1456,12 @@ const serveStatic = async (req, res, pathname) => {
   }
 };
 
-const readWorkBody = async (req) => {
-  try { return await readBody(req, 100_000); }
-  catch (error) {
-    throw Object.assign(new Error(error.message === 'body too large'
-      ? 'El trabajo supera el tamaño permitido.' : 'JSON de trabajo inválido.'), { status: 400 });
-  }
-};
-
-const workItems = createWorkItems({
-  file: path.join(DATA_DIR, 'work-items.json'),
-  resolveThread: async (id) => {
-    if ((await threadLifecycle.snapshot())[id]?.status === 'deleted') return null;
-    if (!idToFile.has(id)) await scanThreads(1, 'all');
-    const file = idToFile.get(id);
-    if (!file) return null;
-    try {
-      const stat = await fsp.stat(file);
-      return await buildMeta(file, id, stat.mtimeMs);
-    } catch (error) {
-      if (error.code === 'ENOENT') return null;
-      throw error;
-    }
-  },
-});
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const p = url.pathname;
   try {
     if (req.method === 'POST' && !guardPost(req)) return json(res, { error: 'forbidden' }, 403);
 
-    if (req.method === 'GET' && p === '/api/work-items') {
-      const states = await threadLifecycle.snapshot();
-      const items = (await workItems.snapshot()).map((item) => ({ ...item,
-        threads: item.threads.map((thread) => ({ ...thread, status: states[thread.id]?.status || 'active' })),
-      }));
-      return json(res, { items });
-    }
-    if (req.method === 'POST' && p === '/api/work-items') {
-      return json(res, { item: await workItems.save(await readWorkBody(req)) }, 201);
-    }
-    const workItem = p.match(/^\/api\/work-items\/([a-zA-Z0-9_-]+)$/);
-    if (req.method === 'POST' && workItem) {
-      return json(res, { item: await workItems.save(await readWorkBody(req), workItem[1]) });
-    }
     if (req.method === 'GET' && p === '/api/dev/events') return liveReload.connect(req, res);
     if (req.method === 'GET' && p === '/api/workspaces') return json(res, { repos: await listRepos() });
     if (req.method === 'GET' && p === '/api/threads') {
@@ -1643,6 +1603,17 @@ const server = http.createServer(async (req, res) => {
       const { key, id, name } = await readBody(req);
       await transitionJira(key, id, name);
       return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/jira/sprint') {
+      const key = assertJiraKey((await readBody(req)).key);
+      if (!(await direct.has('jira'))) return json(res, { error: 'Requiere el token de Jira en el Keychain.' }, 503);
+      const cache = await readJsonFile('jira.json', { fetchedAt: null, items: [] });
+      const sprint = cache.items.map((i) => i.sprint).find((sp) => sp?.state === 'active');
+      if (!sprint) return json(res, { error: 'No hay un sprint activo.' }, 404);
+      await direct.jira.addToSprint(sprint.id, key);
+      const item = cache.items.find((i) => i.key === key);
+      if (item) { item.sprint = sprint; await writeJsonFile('jira.json', cache); }
+      return json(res, { sprint });
     }
     if (req.method === 'POST' && p === '/api/slack/dismiss') {
       const { id } = await readBody(req);

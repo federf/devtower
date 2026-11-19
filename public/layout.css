@@ -311,12 +311,11 @@ body { font-variant-numeric: tabular-nums; }
    List-style views stay narrow for readability; data-heavy views use the screen. */
 body { --cw: 1200px; }
 body[data-view='metrics'], body[data-view='summary'], body[data-view='tasks'], body[data-view='prs'],
-body[data-view='settings'], body[data-view='board'], body[data-view='work-items'] { --cw: 1560px; }
+body[data-view='settings'], body[data-view='board'] { --cw: 1560px; }
 #content { max-width: none; margin: 0; padding: 22px max(24px, calc((100% - var(--cw)) / 2 + 24px)) 56px; }
 #topbar { padding-inline: max(24px, calc((100% - var(--cw)) / 2 + 24px)); }
 #topbar #search { height: 34px; padding: 0 12px; }
 #topbar #refresh { height: 34px; padding: 0 14px; }
-.work-list { max-width: none; }
 
 /* denser, more even rhythm inside the column */
 .kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 20px; }

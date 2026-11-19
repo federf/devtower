@@ -17,7 +17,7 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
   const project = path.join(home, '.claude', 'projects', 'fixture');
   await fs.mkdir(path.join(app, 'public'), { recursive: true });
   await fs.mkdir(project, { recursive: true });
-  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'work-items.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'notify.js', 'summary.js', 'metrics.js', 'trends.js', 'workweek.js', 'package.json']) {
+  for (const name of ['server.js', 'thread-lifecycle.js', 'claude-errors.js', 'live-reload.js', 'integrations.js', 'config.js', 'secrets.js', 'settings.js', 'clockify.js', 'notify.js', 'summary.js', 'metrics.js', 'trends.js', 'workweek.js', 'package.json']) {
     if (name === 'server.js') {
       const original = await fs.readFile(path.join(source, name), 'utf8');
       const guarded = original.replace("import { spawn, execFile } from 'node:child_process';",
@@ -126,32 +126,6 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
       assert.doesNotMatch(events, /fixture frontend change/);
       await assert.rejects(fs.access(path.join(root, 'claude-called')), { code: 'ENOENT' });
     } finally { clearTimeout(timeout); abort.abort(); await reader.cancel().catch(() => {}); }
-  });
-
-  await t.test('local works create, update and reopen without Claude or connector calls', async () => {
-    assert.deepEqual((await request('/api/work-items')).data.items, []);
-    const draft = { title: 'Fixture work', projects: [home], links: ['https://example.test/TEST-1'],
-      notes: 'Checked locally', nextStep: 'Continue tomorrow', threadIds: ['first-session'] };
-    assert.equal((await request('/api/work-items', draft, { 'x-cockpit': '' })).status, 403);
-    assert.equal((await request('/api/work-items', draft, { origin: 'https://evil.example' })).status, 403);
-    const malformed = await fetch(`http://127.0.0.1:${port}/api/work-items`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-cockpit': '1' }, body: '{bad',
-    });
-    assert.equal(malformed.status, 400);
-    const created = await request('/api/work-items', draft);
-    assert.equal(created.status, 201);
-    const item = created.data.item;
-    assert.equal(item.threads[0].id, 'first-session');
-    assert.equal((await request(`/api/work-items/${item.id}`, { ...draft, revision: 1, nextStep: 'Check tests' })).status, 200);
-    assert.equal((await request(`/api/work-items/${item.id}`, { ...draft, revision: 1 })).status, 409);
-    assert.equal((await request('/api/work-items', { ...draft, links: ['javascript:alert(1)'] })).status, 400);
-    assert.equal((await request('/api/work-items', { ...draft, threadIds: ['missing'] })).status, 404);
-    await stop(); await start();
-    const saved = (await request('/api/work-items')).data.items[0];
-    assert.equal(saved.nextStep, 'Check tests');
-    assert.equal(saved.threads[0].status, 'active');
-    await fs.access(path.join(project, 'first-session.jsonl'));
-    await assert.rejects(fs.access(path.join(root, 'claude-called')), { code: 'ENOENT' });
   });
 
   await t.test('explicit refresh reports quota and preserves cached items and timestamps', async () => {
@@ -291,7 +265,6 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     let list = (await request('/api/threads')).data;
     assert.equal(list.threads.some((item) => item.id === 'first-session'), false);
     assert.equal(list.archivedThreads[0].id, 'first-session');
-    assert.equal((await request('/api/work-items')).data.items[0].threads[0].status, 'archived');
     assert.equal((await request('/api/search?q=first-session')).data.hits.length, 0);
     assert.equal((await request('/api/search?q=first-session&visibility=archived')).data.hits.length, 1);
     assert.equal((await request('/api/threads/first-session')).status, 200);
@@ -299,7 +272,6 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     await stop(); await start();
     list = (await request('/api/threads')).data;
     assert.equal(list.archivedThreads[0].id, 'first-session');
-    assert.equal((await request('/api/work-items')).data.items[0].threads[0].status, 'archived');
     assert.equal((await request('/api/threads/first-session/restore', {})).status, 200);
     assert.equal((await request('/api/search?q=first-session')).data.hits.length, 1);
   });
@@ -309,9 +281,6 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     await fs.access(path.join(project, 'first-session.jsonl'));
     assert.equal((await request('/api/threads/first-session/delete', { confirm: true })).status, 200);
     await assert.rejects(fs.access(path.join(project, 'first-session.jsonl')), { code: 'ENOENT' });
-    const savedWork = (await request('/api/work-items')).data.items[0];
-    assert.equal(savedWork.nextStep, 'Check tests');
-    assert.equal(savedWork.threads[0].status, 'deleted');
     assert.equal((await request('/api/threads/first-session')).status, 404);
     assert.equal((await request('/api/search?q=first-session')).data.hits.length, 0);
     assert.equal((await request('/api/search?q=first-session&visibility=archived')).data.hits.length, 0);

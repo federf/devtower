@@ -236,6 +236,8 @@ const hierarchy = (list) => {
 };
 // subtask of a sprint task that is not in the active sprint: Jira leaves it out of the board
 const sprintGap = (j) => (j?.viaParent && j.sprint?.state !== 'active' ? (j.sprint ? `En otro sprint: ${j.sprint.name}` : 'Sin sprint') : '');
+// one click: put the subtask in the active sprint (shown only for subtasks with no sprint at all)
+const sprintFix = (j) => (!j.sprint ? `<span class="tag nosprint-fix" role="button" tabindex="0" data-act="task-sprint" data-key="${esc(j.key)}" title="Agregar ${esc(j.key)} al sprint activo en Jira">＋ Sprint actual</span>` : '');
 const nestedIn = (t, list) => !!t.jira?.parent && list.some((o) => o.key === t.jira.parent);
 
 const taskCard = (t, list = []) => {
@@ -247,7 +249,7 @@ const taskCard = (t, list = []) => {
   const has = t.threads.length > 0;
   return `<div class="card task ${nestedIn(t, list) ? 'sub' : ''}" data-task="${esc(t.key)}">
     <div class="t">${nestedIn(t, list) ? '<span class="sub-arrow" title="Subtarea">↳</span>' : ''}<a class="key" target="_blank" href="${JIRA_BROWSE}/${t.key}" title="Abrir en Jira">${esc(t.key)}</a><span>${j ? esc(j.summary) : esc(t.prs[0]?.title || t.threads[0]?.title || '')}</span></div>
-    <div class="m">${j ? `<span class="tag ${statusCls(j)}" title="Estado en Jira">${esc(j.status)}</span><span class="tag" title="Prioridad">${esc(j.priority || '')}</span><span class="tag" title="Tipo de issue">${esc(j.type || '')}</span>${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>` : ''}${j.assignee ? `<span class="tag" title="Asignada a">${esc(j.assignee)}</span>` : ''}${j.parent && !nestedIn(t, list) ? `<span class="tag" title="Tarea padre">↳ ${esc(j.parent)}</span>` : ''}<span>${j.updated ? `actualizada ${ago(j.updated)}` : ''}</span>` : '<span class="tag" title="Esta tarea no está en tu lista de Jira (no asignada o ya cerrada): se detectó por tus hilos y PRs">detectada en hilos/PRs</span>'}</div>
+    <div class="m">${j ? `<span class="tag ${statusCls(j)}" title="Estado en Jira">${esc(j.status)}</span><span class="tag" title="Prioridad">${esc(j.priority || '')}</span><span class="tag" title="Tipo de issue">${esc(j.type || '')}</span>${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>${sprintFix(j)}` : ''}${j.assignee ? `<span class="tag" title="Asignada a">${esc(j.assignee)}</span>` : ''}${j.parent && !nestedIn(t, list) ? `<span class="tag" title="Tarea padre">↳ ${esc(j.parent)}</span>` : ''}<span>${j.updated ? `actualizada ${ago(j.updated)}` : ''}</span>` : '<span class="tag" title="Esta tarea no está en tu lista de Jira (no asignada o ya cerrada): se detectó por tus hilos y PRs">detectada en hilos/PRs</span>'}</div>
     ${links ? `<div class="links">${links}</div>` : ''}
     <div class="acts">
       ${has ? btn('task-continue', 'Continuar hilo', true, 'Abrir el hilo más reciente de esta tarea') : btn('task-start', 'Empezar con Claude', true, 'Nuevo hilo con el ticket como contexto: Claude lo lee en Jira y propone un plan (modo Plan, no edita)')}
@@ -292,7 +294,7 @@ const boardCard = (t, selected, list = []) => {
   const sub = nestedIn(t, list);
   return `<button class="kcard ${selected ? 'on' : ''} ${sub ? 'sub' : ''}" data-act="task-select" data-key="${esc(t.key)}" draggable="true" title="${esc(j.summary)} · arrastrala a otra columna para cambiar el estado, o arriba/abajo para ordenarla">
     <span class="kkey">${sub ? '↳ ' : ''}${esc(t.key)}${j.parent && !sub ? `<em class="kparent" title="Tarea padre">↳ ${esc(j.parent)}</em>` : ''}</span><span class="ksum">${esc(j.summary)}</span>
-    <span class="kmeta">${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>` : ''}<span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
+    <span class="kmeta">${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>${sprintFix(j)}` : ''}<span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
 };
 
 const renderBoard = (tasks, board) => {
@@ -462,6 +464,18 @@ document.addEventListener('click', async (e) => {
       renderTransition();
       try { state.tm.list = (await postJson('/api/jira/transitions', { key: t.key })).transitions; } catch (err) { state.tm.error = err.message; }
       if (state.tm) { state.tm.loading = false; renderTransition(); }
+      break;
+    }
+    case 'task-sprint': {
+      if (el.dataset.busy) break;
+      el.dataset.busy = '1'; el.textContent = '…';
+      try {
+        const { sprint } = await postJson('/api/jira/sprint', { key: el.dataset.key });
+        const item = state.jira.items.find((i) => i.key === el.dataset.key);
+        if (item) item.sprint = sprint;
+        C.toast(`${el.dataset.key} → ${sprint.name}`);
+      } catch (err) { C.toast(err.message); }
+      C.render();
       break;
     }
     case 'modal-cancel': closeModal(); break;

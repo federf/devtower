@@ -9,7 +9,6 @@
   <script src="/config.js"></script>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/work.css">
-  <link rel="stylesheet" href="/work-items.css">
   <link rel="stylesheet" href="/layout.css">
 </head>
 <body>
@@ -18,7 +17,6 @@
       <div class="logo" title="devtower · tu torre de control de desarrollo"><img src="/devtower.svg" alt="" width="32" height="32"><span>devtower</span></div>
       <button data-view="today" class="nav active" title="Hoy: lo que necesita tu atención, priorizado (PRs, Slack, Jira)
 ⌥B  ·  ⌘1"><span>◎</span><b>Hoy</b><i id="b-today"></i></button>
-      <button data-view="work-items" class="nav" title="Trabajos: contexto y próximo paso, sin IA automática · ⌥G"><span>◇</span><b>Trabajos</b></button>
       <button data-view="threads" class="nav" title="Hilos: tus conversaciones de Claude Code, con búsqueda y filtro por fecha
 ⌥H  ·  ⌘2"><span>✦</span><b>Hilos</b><i id="b-threads"></i></button>
       <button data-view="tasks" class="nav" title="Tareas: tus issues de Jira vinculadas con hilos y PRs
@@ -106,7 +104,6 @@ Esc">■ Detener</button>
   </div>
   <script src="/app.js" type="module"></script>
   <script src="/work.js" type="module"></script>
-  <script src="/work-items.js" type="module"></script>
   <script src="/palette.js" type="module"></script>
   <script src="/health.js" type="module"></script>
   <script src="/deploy.js" type="module"></script>

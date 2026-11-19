@@ -15,7 +15,7 @@ datos a ningún servidor propio. La IA (Claude Code) se usa **solo cuando la ped
 | **PRs** | Tus PRs, los que tenés que revisar y sus validaciones (GitHub Actions, Jenkins, etc.) con links | Arreglar CI, comentarios o conflictos con Claude |
 | **Master y métricas** | Último commit de `master`/`main` de tus repos y sus checks; métricas de tus PRs de 30 días | Investigar una rama rota |
 | **Slack** | DMs, menciones e hilos donde te deben respuesta | Responder (o redactar con Claude) sin salir |
-| **Hilos** | Tus conversaciones de Claude Code por proyecto | Continuar, archivar, vincular a un trabajo |
+| **Hilos** | Tus conversaciones de Claude Code por proyecto | Continuar, archivar, borrar |
 | **⌘K** | Accesos rápidos: vistas, tus links (CI, logs, APM…), tickets | — |
 | **🔔** | Lo que espera tu respuesta: Slack, comentarios de Jira, cambios pedidos o CI rojo en tus PRs, reviews pedidas, master roto, hilos de Claude que terminaron. También como notificación de macOS | Ir directo al mensaje, PR o hilo |
 | **Clockify** | Timer siempre visible, ▶ por tarea, tus bloques de tiempo frecuentes | Iniciar, pausar, reanudar |

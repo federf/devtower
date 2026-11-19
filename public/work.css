@@ -167,3 +167,6 @@
 
 .tag.nosprint { background: color-mix(in srgb, var(--warn, #d97706) 22%, transparent); color: var(--warn, #d97706); font-weight: 600; }
 .card.task:has(.nosprint), .kcard:has(.nosprint) { outline: 1.5px solid var(--warn, #d97706); }
+
+.tag.nosprint-fix { cursor: pointer; background: var(--accent, #4f8cff); color: #fff; font-weight: 600; }
+.tag.nosprint-fix:hover { filter: brightness(1.1); }

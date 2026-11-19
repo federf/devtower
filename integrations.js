@@ -236,6 +236,7 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
       comments: (f.comment?.comments || []).slice(-comments).map((c) => ({ author: c.author?.displayName || '', at: c.created, text: adfText(c.body).trim().slice(0, 1200) })),
     };
   };
+  const addToSprint = (sprintId, key) => jira(`/rest/agile/1.0/sprint/${Number(sprintId)}/issue`, { method: 'POST', body: { issues: [key] } });
   const transitionJira = (key, id) => jira(`/rest/api/3/issue/${key}/transitions`, { method: 'POST', body: { transition: { id: String(id) } } });
 
   // ----------------------------------------------------------------- Slack
@@ -363,7 +364,7 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
   return {
     has,
     forget,
-    jira: { search: searchJira, resolvedSince, inProgress: () => issues('assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC'), open: () => issues('assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'), changedByMe, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira },
+    jira: { search: searchJira, resolvedSince, inProgress: () => issues('assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC'), open: () => issues('assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'), changedByMe, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira, addToSprint },
     slack: { pending: pendingSlack, send: sendSlack, recent: recentSlack },
   };
 };
