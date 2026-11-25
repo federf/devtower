@@ -352,6 +352,13 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
     return [...found.values()].sort((a, b) => Number(b.slackTs) - Number(a.slackTs));
   };
 
+  // last messages of a thread as plain text, oldest first (context for the AI reply suggestion)
+  const threadText = async (channel, ts, limit = 12) => {
+    const msgs = (await replies(channel, ts)).slice(-limit);
+    const lines = await Promise.all(msgs.map(async (m) => `${await userName(m.user)}: ${await readable(m.text)}`));
+    return lines.join('\n');
+  };
+
   const sendSlack = async ({ channelId, threadTs, text }) => {
     const data = await slack('chat.postMessage', { channel: channelId, text, ...(threadTs ? { thread_ts: threadTs } : {}) }, { post: true });
     const link = await slack('chat.getPermalink', { channel: channelId, message_ts: data.ts }).then((d) => d.permalink).catch(() => '');
@@ -365,6 +372,6 @@ export const createIntegrations = ({ jiraSite = '', jiraEmail = '', fetchImpl = 
     has,
     forget,
     jira: { search: searchJira, resolvedSince, inProgress: () => issues('assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC'), open: () => issues('assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'), changedByMe, nextSprint, boardLayout, assignLanes, issue: getIssue, me: jiraMe, recentComments, comment: commentJira, transitions: jiraTransitions, transition: transitionJira, addToSprint },
-    slack: { pending: pendingSlack, send: sendSlack, recent: recentSlack },
+    slack: { pending: pendingSlack, send: sendSlack, recent: recentSlack, threadText },
   };
 };

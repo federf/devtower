@@ -1038,12 +1038,13 @@ const suggestSlackReply = async (id, instruction) => {
   const item = await findSlackItem(id);
   if (!item) throw new Error('Mensaje no encontrado: actualizá Slack');
   const t = slackTarget(item);
-  const prompt = `Sos ${CONFIG.user.name || 'el usuario'} (user id Slack ${SLACK_ME}) en Slack. Leé este mensaje y su hilo. ${describeSlackItem(item, t)}
-Mensaje de ${item.author} en ${item.channel}: "${item.text}".
+  // the thread is read by code (no tools, one turn); without a token the message alone is the context
+  const thread = t.channelId && t.threadTs && (await direct.has('slack')) ? await direct.slack.threadText(t.channelId, t.threadTs).catch(() => '') : '';
+  const prompt = `Sos ${CONFIG.user.name || 'el usuario'} (user id Slack ${SLACK_ME}) en Slack.
+Mensaje de ${item.author} en ${item.channel}: "${item.text}".${thread ? `\nHilo (más viejo primero):\n<<<\n${thread}\n>>>` : ''}
 Redactá una respuesta breve, natural, en español rioplatense y en primera persona, lista para enviar.${instruction ? `\nInstrucción mía para la respuesta: ${instruction}` : ''}
 Devolvé ÚNICAMENTE el texto de la respuesta, sin comillas, sin explicaciones. No envíes nada ni crees borradores.`;
-  const { text, denials } = await runClaudeText(prompt, { allowed: SLACK_READ_TOOLS, disallowed: [`${SLACK_TOOL}slack_send_message_draft`], maxTurns: 10 });
-  if (denials.length > 0 && /permis|aprob|acceso|permission/i.test(text)) throw new Error('Claude intentó usar una herramienta de Slack no habilitada y no pudo redactar. Reintentá.');
+  const { text } = await runClaudeText(prompt, { maxTurns: 1 });
   return text;
 };
 
