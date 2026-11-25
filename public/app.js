@@ -299,7 +299,7 @@ const render = () => {
   if (document.activeElement?.matches?.('.reply textarea, .settings-view input, .settings-view select')
     || document.querySelector('.kcard.dragging')) { state.dirty = true; return; }
   $$('#rail .nav[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === state.view));
-  $('#view-title').textContent = { today: 'Hoy', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', summary: 'Resumen', metrics: 'Métricas', settings: 'Configuración' }[state.view] || 'devtower';
+  $('#view-title').textContent = { today: 'Hoy', cases: 'Casos', threads: 'Hilos', tasks: 'Tareas', prs: 'Pull requests', slack: 'Slack pendientes', summary: 'Resumen', metrics: 'Métricas', settings: 'Configuración' }[state.view] || 'devtower';
   document.body.dataset.view = state.view;
   syncRangeUi();
   renderStats();
@@ -1018,6 +1018,7 @@ $('#search').addEventListener('input', (e) => {
 $('#refresh').addEventListener('click', async () => {
   if (state.view === 'summary') return window.cockpit.refreshSummary?.();
   if (state.view === 'metrics') return window.cockpit.refreshMetrics?.();
+  if (state.view === 'cases') { await api('/api/gmail/refresh', {}); return window.cockpit.loadCases?.(); }
   loadThreads(); loadPrs(true);
   if (state.view === 'slack') { await api('/api/slack/refresh', {}); state.slack.running = true; render(); pollSlack(); }
   if (state.view === 'tasks') window.cockpit.refreshJira?.();
@@ -1444,7 +1445,7 @@ const stepThread = (dir) => {
   if (next) openThread(next.id);
 };
 
-const VIEWS = ['today', 'threads', 'tasks', 'prs', 'slack', 'summary', 'metrics'];
+const VIEWS = ['today', 'cases', 'threads', 'tasks', 'prs', 'slack', 'summary', 'metrics'];
 const stepView = (dir) => setView(VIEWS[(VIEWS.indexOf(state.view) + dir + VIEWS.length) % VIEWS.length]);
 const stepPrTab = (dir) => {
   const tabs = ['mine', 'toReview', 'reviewed'];

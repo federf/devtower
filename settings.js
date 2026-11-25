@@ -99,6 +99,21 @@ const sanitize = (body, current) => {
     if (next.workweek.end <= next.workweek.start) throw fail('El fin de la jornada debe ser posterior al inicio');
     if ('skipOffDays' in w) next.workweek.skipOffDays = Boolean(w.skipOffDays);
   }
+  if (body.gmail && typeof body.gmail === 'object') {
+    if ('days' in body.gmail) next.gmail.days = Math.min(14, Math.max(1, Math.round(Number(body.gmail.days)) || DEFAULTS.gmail.days));
+    if ('onlyDirect' in body.gmail) next.gmail.onlyDirect = Boolean(body.gmail.onlyDirect);
+    if ('excludeSenders' in body.gmail) next.gmail.excludeSenders = strList(body.gmail.excludeSenders, /^[\w.@+*-]+$/, 100);
+  }
+  if (body.cases && typeof body.cases === 'object') {
+    if ('auto' in body.cases) next.cases.auto = Boolean(body.cases.auto);
+    if ('maxPerRun' in body.cases) next.cases.maxPerRun = Math.min(40, Math.max(1, Math.round(Number(body.cases.maxPerRun)) || DEFAULTS.cases.maxPerRun));
+    if ('at' in body.cases) { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(body.cases.at))) throw fail('La hora del análisis debe ser HH:MM'); next.cases.at = body.cases.at; }
+    if ('timezone' in body.cases) {
+      const tz = str(body.cases.timezone, 60); // empty = system clock
+      if (tz) try { new Intl.DateTimeFormat('en', { timeZone: tz }); } catch { throw fail('Zona horaria inválida (ej. America/Argentina/Buenos_Aires)'); }
+      next.cases.timezone = tz;
+    }
+  }
   if (body.logs) next.logs.hint = str(body.logs.hint, 500);
   if (body.notify && typeof body.notify === 'object') {
     for (const k of Object.keys(DEFAULTS.notify)) if (k in body.notify) next.notify[k] = Boolean(body.notify[k]);
@@ -117,7 +132,7 @@ const writeRaw = (cfg) => {
 
 export const createSettings = ({ loadConfig, forget, gh = 'gh', fetchImpl = fetch }) => {
   const editable = (c) => ({ user: c.user, reposDir: c.reposDir, github: c.github, jira: { site: c.jira.site, email: c.jira.email, ticketPattern: c.jira.ticketPattern, supportLabels: c.jira.supportLabels },
-    deployCheck: c.deployCheck, links: c.links, logs: c.logs, notify: c.notify, workweek: c.workweek });
+    deployCheck: c.deployCheck, links: c.links, logs: c.logs, notify: c.notify, workweek: c.workweek, cases: c.cases, gmail: c.gmail });
 
   const status = async () => {
     const c = loadConfig();

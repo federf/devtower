@@ -34,6 +34,9 @@ export const DEFAULTS = {
   workweek: { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00', skipOffDays: true }, // normal hours for the metrics (0 = domingo)
   logs: { hint: '' },
   clockify: { workspaceId: '' }, // filled when the API key is linked
+  gmail: { days: 3, onlyDirect: true, excludeSenders: ['notifications@github.com', 'noreply', 'no-reply'] }, // what counts as an email that needs you
+  // Claude analyzes the cases not reviewed yet (read-only), once a day at `at` (24h, in `timezone`; empty = system time), at most `maxPerRun` per run
+  cases: { auto: true, at: '08:00', timezone: '', maxPerRun: 15 }, // timezone '' = the system clock
   notify: { native: false, slack: false, jira: false, github: false, master: false, claude: false, slackNative: false },   // how Claude should search production logs (e.g. which skills/MCP to use)
 };
 

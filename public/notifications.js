@@ -11,9 +11,9 @@ let tab = 'pending'; // 'pending' | 'seen'
 const ICON = { slack: '#', jira: '☰', github: '⑂', master: '⛔', claude: '✦' };
 const bell = document.createElement('button');
 bell.id = 'bell';
-bell.className = 'nav';
+bell.className = 'tbtn';
 bell.title = 'Notificaciones: lo que espera tu respuesta';
-document.querySelector('#rail [data-view="settings"]')?.before(bell);
+document.querySelector('#top-tools')?.prepend(bell);
 const panel = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'notif-panel', hidden: true }));
 
 const title = document.title;

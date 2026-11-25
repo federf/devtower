@@ -14,6 +14,7 @@ state.taskOrder = store.get('taskOrder', []);
 state.preview = { open: new Set(), data: {} }; // vista previa de tareas: descripción y comentarios de Jira // orden manual de tarjetas en el tablero (solo local)
 state.todayAge = store.get('todayAge', 7); // días; 0 = sin límite
 state.taskSel = null;
+state.taskMin = false;
 state.nextSprint = { loading: false, error: null };
 
 // ------------------------------------------------------------------ data
@@ -141,6 +142,49 @@ const inbox = () => {
   return demoted.sort((a, b) => a.sev - b.sev || Date.parse(b.at || 0) - Date.parse(a.at || 0));
 };
 
+// ------------------------------------------------------------------ Plan del día (sugerido, sin IA: ordena lo que ya hay)
+
+const PRIO = [[/highest|blocker|cr[ií]tic|bloque/i, 0], [/poco|low|baja|minor/i, 3], [/high|alta|major|important/i, 1], [/medium|media/i, 2], [/lowest|trivial/i, 4]];
+const prioRank = (name = '') => (PRIO.find(([re]) => re.test(name)) || [0, 2])[1];
+const dueInfo = (due) => {
+  if (!due) return null;
+  const days = Math.floor((Date.parse(`${due.slice(0, 10)}T12:00:00`) - Date.now()) / 86_400_000) + (new Date().getHours() < 12 ? 0 : 1);
+  if (days < -30) return null; // vencimientos viejísimos son ruido, no urgencia
+  return { days, label: days < 0 ? `venció hace ${-days} d` : days === 0 ? 'vence hoy' : days === 1 ? 'vence mañana' : `vence en ${days} d` };
+};
+const planTasks = () => buildTasks(state.jira.items, false)
+  .filter((t) => t.jira && !t.jira.viaParent && t.jira.statusCategory !== 'done')
+  .map((t) => ({ t, due: dueInfo(t.jira.due), active: t.jira.statusCategory === 'indeterminate', inSprint: t.jira.sprint?.state === 'active' }))
+  .sort((a, b) => (a.due?.days ?? 99) - (b.due?.days ?? 99) || b.active - a.active || b.inSprint - a.inSprint || prioRank(a.t.jira.priority) - prioRank(b.t.jira.priority)
+    || Date.parse(b.t.jira.updated || 0) - Date.parse(a.t.jira.updated || 0));
+const planTaskRow = ({ t, due, active }) => rowHtml({ sev: 2, icon: active ? '◐' : '○', attrs: `data-task="${esc(t.key)}"`,
+  title: `${esc(t.key)} ${esc(t.jira.summary)}`,
+  sub: `<span class="tag ${statusCls(t.jira)}">${esc(t.jira.status)}</span><span class="tag">${esc(t.jira.priority || '—')}</span>${due ? `<span class="tag ${due.days <= 0 ? 'nosprint' : ''}">${due.label}</span>` : ''}${t.prs.length ? `<span class="tag">⑂ ${t.prs.length}</span>` : ''}`,
+  acts: btn(t.threads.length ? 'task-continue' : 'task-start', t.threads.length ? 'Continuar hilo' : 'Empezar con Claude', true, 'Abrir un hilo con el ticket como contexto') + `<button class="btn sm" data-go="tasks" title="Abrir Tareas">Ver</button>` });
+const EST = { '✎': 45, '⚠': 30, '⇄': 20, '💬': 20, '👀': 30, '↻': 20, '#': 10 }; // minutos aproximados por tipo
+const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}` : `${m} min`);
+const textOf = (html) => html.replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+const dayPlan = (inboxItems) => {
+  const week = Date.now() - 7 * 86_400_000;
+  const slack = inboxItems.filter((i) => i.icon === '#' && (!i.at || Date.parse(i.at) >= week));
+  const mentions = slack.filter((i) => i.sev === 2);
+  const dms = slack.filter((i) => i.sev !== 2);
+  const mins = (i) => (i.sev === 3 && i.icon === '#' ? 5 : EST[i.icon] || 15);
+  const wrap = (items) => items.map((i) => ({ html: rowHtml(i), min: mins(i), text: `${textOf(i.title)} — ${textOf(i.sub)}` }));
+  const phases = [
+    ['1 · Desbloquear', 'Lo que frena tus PRs: se resuelve rápido y destraba a otros', wrap(inboxItems.filter((i) => i.sev === 1).slice(0, 3))],
+    ['2 · Responder y revisar', 'Menciones y reviews pedidos: contestá temprano para no bloquear a nadie', wrap([...mentions.slice(0, 3), ...inboxItems.filter((i) => i.icon === '👀' || i.icon === '↻').slice(0, 3)])],
+    ['3 · Foco profundo', 'Tus tareas más urgentes (por vencimiento, estado y prioridad). Bloque sin interrupciones', planTasks().slice(0, 3).map((x) => ({ html: planTaskRow(x), min: 90, text: `${x.t.key} ${x.t.jira.summary} (${x.t.jira.status}, ${x.t.jira.priority || 'sin prioridad'}${x.due ? `, ${x.due.label}` : ''})` }))],
+    ['4 · Chats pendientes', 'DMs sin responder: un solo bloque corto al final', wrap(dms.slice(0, 3))],
+  ].filter(([, , rows]) => rows.length);
+  if (!phases.length) return '';
+  const total = phases.reduce((a, [, , rows]) => a + rows.reduce((x, r) => x + r.min, 0), 0);
+  state.dayPlanText = phases.map(([title, , rows]) => `${title}\n${rows.map((r) => `- (~${r.min} min) ${r.text}`).join('\n')}`).join('\n\n');
+  return `<div class="dayplan"><div class="sect-head"><h3>Plan sugerido para hoy</h3><span class="count">~${fmtMin(total)}</span><em>Ordenado con lo que tenés pendiente en Slack, PRs y Jira · tiempos aproximados</em>
+    <button class="btn sm" data-act="plan-claude" title="Abre un hilo con este plan para que Claude lo ajuste con vos (no edita nada)">✦ Ajustar con Claude</button></div>
+    ${phases.map(([title, why, rows]) => `<div class="dp-phase"><div class="dp-h"><b>${title}</b><em>~${fmtMin(rows.reduce((x, r) => x + r.min, 0))}</em><span>${why}</span></div><div class="list-wide">${rows.map((r) => r.html).join('')}</div></div>`).join('')}</div>`;
+};
+
 const running = () => state.threads.filter((t) => t.running);
 
 const AGES = [[7, '1 semana'], [30, '1 mes'], [0, 'Todo']];
@@ -170,6 +214,7 @@ const renderToday = () => {
       ${kpi(slackN, 'Slack pendientes', slackN ? 'warn' : '', 'slack')}
       ${kpi(buildTasks().filter((t) => t.jira?.statusCategory === 'indeterminate').length, 'tareas en curso', '', 'tasks')}
     </div>
+    ${dayPlan(all)}
     <div class="sources">${sourceBtn('prs', 'PRs', state.prs?.fetchedAt, false)}${sourceBtn('slack', 'Slack', state.slack.fetchedAt, state.slack.running)}${sourceBtn('jira', 'Jira', state.jira.fetchedAt, state.jira.running)}</div>
     ${ageSeg}
     ${live.length ? `${sectionHead('Claude trabajando ahora', live.length)}<div class="list-wide">${live.map((t) => `<div class="card link" data-act="open-thread" data-id="${t.id}"><i class="dot run"></i><span>${esc(t.title)}</span><em>${esc(t.project)}</em></div>`).join('')}</div>` : ''}
@@ -297,6 +342,13 @@ const boardCard = (t, selected, list = []) => {
     <span class="kmeta">${sprintGap(j) ? `<span class="tag nosprint" title="Esta subtarea no está en el sprint activo de su tarea padre">⚠ ${esc(sprintGap(j))}</span>${sprintFix(j)}` : ''}<span class="tag">${esc(j.priority || '—')}</span>${j.type === 'Subtarea' ? '<span class="tag">Subtarea</span>' : ''}${marks}${C.deployBadge?.(t.key) || ''}${C.timerMark?.(t.key) || ''}</span></button>`;
 };
 
+// task detail as a dialog: close (✕ / Esc / click outside) or minimize to a chip at the bottom
+const taskDialog = (t) => (state.taskMin
+  ? `<div class="tdock" data-act="task-restore" role="button" tabindex="0" title="Volver a abrir ${esc(t.key)}"><b>${esc(t.key)}</b><span>${esc(t.jira.summary)}</span><i data-act="task-close" title="Cerrar" role="button">✕</i></div>`
+  : `<div class="tmodal"><div class="tscrim" data-act="task-close"></div><div class="tdialog" role="dialog" aria-label="Detalle de ${esc(t.key)}">
+      <div class="thead"><b>${esc(t.key)}</b><span class="spacer"></span><button class="btn sm ghost" data-act="task-min" title="Minimizar: queda abajo para retomarla">—</button><button class="btn sm ghost" data-act="task-close" title="Cerrar (Esc)">✕</button></div>
+      <div class="tbody">${taskCard(t)}</div></div></div>`);
+
 const renderBoard = (tasks, board) => {
   const lanes = board.swimlanes.map((l, i) => ({ ...l, i, tasks: tasks.filter((t) => t.jira.lane === i) })).filter((l) => l.tasks.length);
   if (!lanes.length) return '';
@@ -305,7 +357,7 @@ const renderBoard = (tasks, board) => {
   const hidden = lane.tasks.filter((t) => inColumn(t) === -1);
   const sel = state.taskSel && lane.tasks.find((t) => t.key === state.taskSel);
   return `<div class="viewbar lanes"><div class="seg">${lanes.map((l) => `<button class="${l === lane ? 'on' : ''}" data-act="task-lane" data-lane="${esc(l.name)}" title="${esc(l.query || 'Resto de las tareas')}">${esc(l.name)}<b>${l.tasks.length}</b></button>`).join('')}</div></div>
-    ${sel ? `<div class="kdetail">${taskCard(sel)}</div>` : ''}
+    ${sel ? taskDialog(sel) : ''}
     <div class="kanban" style="--cols:${board.columns.length}">${board.columns.map((c, ci) => {
       const rank = (t) => { const i = state.taskOrder.indexOf(t.key); return i === -1 ? Infinity : i; };
       const list = hierarchy(lane.tasks.filter((t) => inColumn(t) === ci).sort((a, b) => rank(a) - rank(b)));
@@ -374,6 +426,9 @@ const modal = document.body.appendChild(Object.assign(document.createElement('di
 const closeModal = () => { modal.hidden = true; modal.innerHTML = ''; state.cm = null; state.tm = null; };
 const openModal = (html) => { modal.innerHTML = `<div class="card2">${html}</div>`; modal.hidden = false; };
 modal.addEventListener('mousedown', (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && modal.hidden && state.taskSel && !state.taskMin && state.view === 'tasks') { state.taskSel = null; C.render(); }
+});
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) { e.preventDefault(); e.stopImmediatePropagation(); closeModal(); } }, true);
 
 const renderComment = () => {
@@ -444,7 +499,14 @@ document.addEventListener('click', async (e) => {
     case 'next-sprint-refresh': loadNextSprint(); break;
     case 'today-age': state.todayAge = Number(el.dataset.d); store.set('todayAge', state.todayAge); C.render(); break;
     case 'task-lane': state.taskLane = el.dataset.lane; state.taskSel = null; store.set('taskLane', state.taskLane); C.render(); break;
-    case 'task-select': state.taskSel = state.taskSel === el.dataset.key ? null : el.dataset.key; if (state.taskSel) openPreview(state.taskSel); C.render(); break;
+    case 'task-select': state.taskSel = state.taskSel === el.dataset.key && !state.taskMin ? null : el.dataset.key; state.taskMin = false; if (state.taskSel) openPreview(state.taskSel); C.render(); break;
+    case 'plan-claude':
+      if (state.dayPlanText) C.addContext({ label: 'Plan del día', text: `Plan sugerido de hoy (generado por devtower con mis pendientes de Slack, PRs y Jira):\n\n${state.dayPlanText}` },
+        { draft: 'Revisá este plan del día y ajustalo: decime qué haría primero, qué puede esperar y qué podría delegar o descartar. No edites nada, solo proponé el orden.' });
+      break;
+    case 'task-close': e.stopPropagation(); state.taskSel = null; state.taskMin = false; C.render(); break;
+    case 'task-min': state.taskMin = true; C.render(); break;
+    case 'task-restore': state.taskMin = false; C.render(); break;
     case 'task-preview': { const k = card?.dataset.task; if (state.preview.open.has(k)) state.preview.open.delete(k); else openPreview(k); C.render(); break; }
     case 'task-preview-reload': loadPreview(card?.dataset.task); break;
     case 'task-continue': { const t = task(); if (t?.threads[0]) { await C.openThread(t.threads[0].id); $('#input').focus(); } break; }

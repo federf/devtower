@@ -9,6 +9,9 @@ import { createThreadLifecycle } from './thread-lifecycle.js';
 import { describeClaudeFailure, parseClaudeResponse } from './claude-errors.js';
 import { createLiveReload } from './live-reload.js';
 import { createIntegrations } from './integrations.js';
+import { buildQuery, createGmail } from './gmail.js';
+import { createGmailImap } from './gmail-imap.js';
+import { buildPrompt, collectCases, mergeCases, nextToProcess, parseResult } from './cases.js';
 import { CONFIG_DIR, loadConfig, publicConfig } from './config.js';
 import { createSettings } from './settings.js';
 import { createClockify } from './clockify.js';
@@ -41,6 +44,13 @@ const settings = createSettings({ loadConfig, forget: () => { direct.forget(); c
 // config changes need a fresh process: under launchd (autostart) a non-zero exit is relaunched
 const UNDER_LAUNCHD = String(process.env.XPC_SERVICE_NAME || '').startsWith('local.devtower');
 const restartSoon = () => { if (UNDER_LAUNCHD) setTimeout(() => process.exit(75), 300); return UNDER_LAUNCHD ? 'auto' : 'manual'; };
+const noKeychain = process.env.DEVTOWER_KEYCHAIN === '0' ? { readSecret: async () => null } : {};
+const mailQuery = () => buildQuery(loadConfig().gmail);
+const gmail = createGmail({ ...noKeychain, query: mailQuery }); // Google OAuth
+const gmailImap = createGmailImap({ ...noKeychain, query: mailQuery }); // app password
+// IMAP wins when set up (simplest login); OAuth otherwise
+const pickMail = async () => ((await gmailImap.status()).linked ? gmailImap : gmail);
+const mail = { status: async () => (await pickMail()).status(), pending: async () => (await pickMail()).pending(), threadText: async (...a) => (await pickMail()).threadText(...a) };
 const direct = createIntegrations({ jiraSite: CONFIG.jira.site, jiraEmail: CONFIG.jira.email,
   ...(process.env.DEVTOWER_KEYCHAIN === '0' ? { readSecret: async () => null } : {}) });
 
@@ -983,22 +993,38 @@ const refreshSlack = async ({ background = false } = {}) => {
   } finally { slackState.running = false; }
 };
 
+// Gmail (read-only, direct API): pending threads, refreshed with the other sources
+const gmailState = { running: false, error: null };
+const refreshGmail = async () => {
+  if (gmailState.running || !(await mail.status()).linked) return;
+  gmailState.running = true;
+  try {
+    gmailState.error = null;
+    await writeJsonFile('gmail.json', { fetchedAt: new Date().toISOString(), items: await mail.pending() });
+  } catch (error) { gmailState.error = error.message; } finally { gmailState.running = false; }
+};
+const loadGmail = async () => {
+  const cache = await readJsonFile('gmail.json', { fetchedAt: null, items: [] });
+  const dismissed = new Set(await readJsonFile('dismissed.json', []));
+  return { ...cache, items: cache.items.filter((i) => !dismissed.has(i.id)), ...gmailState, ...(await mail.status()) };
+};
+
 const SLACK_TOOL = 'mcp__claude_ai_Slack__';
-const runClaudeText = (prompt, { allowed = [], disallowed = [], maxTurns = 8, timeoutMs = 120_000 } = {}) =>
+const runClaudeText = (prompt, { allowed = [], disallowed = [], maxTurns = 8, timeoutMs = 120_000, cwd = HOME } = {}) =>
   new Promise((resolve, reject) => {
     const args = ['-p', '--output-format', 'json', '--model', 'sonnet', '--no-session-persistence', '--max-turns', String(maxTurns)];
     if (allowed.length) args.push('--allowedTools', ...allowed);
     if (disallowed.length) args.push('--disallowedTools', ...disallowed);
-    const child = spawn('claude', args, { cwd: HOME, env: cleanEnv() });
+    const child = spawn('claude', args, { cwd, env: cleanEnv() });
     let out = '';
     let err = '';
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, timeoutMs);
     child.stdout.on('data', (c) => (out += c));
     child.stderr.on('data', (c) => (err += c));
-    child.on('error', () => {
+    child.on('error', (e) => {
       clearTimeout(timer);
-      reject(Object.assign(new Error('No se pudo iniciar Claude Code. Verificá que esté instalado y que tu sesión esté activa.'),
+      reject(Object.assign(new Error(`No se pudo iniciar Claude Code${e.code === 'ENOENT' && cwd && !fs.existsSync(cwd) ? ` (no existe la carpeta ${cwd})` : ''}. Verificá que esté instalado y que tu sesión esté activa.`),
         { code: 'claude_unavailable', status: 503 }));
     });
     child.on('close', (code) => {
@@ -1441,6 +1467,69 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/prs') return json(res, await loadPrs(url.searchParams.get('refresh') === '1'));
     if (req.method === 'GET' && p === '/api/slack') return json(res, await loadSlack());
+    if (req.method === 'GET' && p === '/api/cases') return json(res, await listCases());
+    if (req.method === 'POST' && p === '/api/cases/run') {
+      if (caseState.running || batchRunning) return json(res, { error: 'Ya hay un análisis en curso' }, 409);
+      runBatch(loadConfig().cases.maxPerRun).catch((e) => console.error('casos:', e.message));
+      return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/cases/process') {
+      const { id } = await readBody(req);
+      startCase(String(id));
+      return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/cases/answer') {
+      const { id, answers, note } = await readBody(req);
+      const clean = Object.fromEntries(Object.entries(answers && typeof answers === 'object' ? answers : {}).slice(0, 10).map(([k, v]) => [String(k).slice(0, 20), String(v).slice(0, 1000)]).filter(([, v]) => v.trim()));
+      await mutateCases((store) => {
+        if (!store[id]) throw Object.assign(new Error('Caso no encontrado'), { status: 404 });
+        Object.assign(store[id], { answers: { ...(store[id].answers || {}), ...clean }, note: String(note || '').slice(0, 800), status: 'new', failedAt: undefined, refinedAt: new Date().toISOString() });
+        return { store };
+      });
+      startCase(String(id));
+      return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/cases/act') {
+      const { id, index, text } = await readBody(req);
+      await actOnCase(String(id), Number(index), text);
+      return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/cases/dismiss') {
+      const body = await readBody(req);
+      const { id } = body;
+      await mutateCases((store) => { if (store[id]) Object.assign(store[id], { status: body.status === 'done' ? 'done' : 'dismissed', doneAction: body.status === 'done' ? String(body.label || 'Hecho').slice(0, 60) : undefined, closedAt: new Date().toISOString() }); return { store }; });
+      return json(res, { ok: true });
+    }
+    if (req.method === 'GET' && p === '/api/gmail') return json(res, await loadGmail());
+    if (req.method === 'POST' && p === '/api/gmail/refresh') { refreshGmail(); return json(res, { ok: true }); }
+    if (req.method === 'POST' && p === '/api/google/config') {
+      const body = await readBody(req);
+      await gmail.configure(body.clientId, body.clientSecret);
+      return json(res, { url: await gmail.authUrl(`http://127.0.0.1:${PORT}/api/google/callback`) });
+    }
+    if (req.method === 'POST' && p === '/api/google/connect') return json(res, { url: await gmail.authUrl(`http://127.0.0.1:${PORT}/api/google/callback`) });
+    if (req.method === 'GET' && p === '/api/google/callback') {
+      const done = (msg) => { res.writeHead(302, { location: `/?google=${encodeURIComponent(msg)}#view=settings` }); res.end(); };
+      if (url.searchParams.get('error')) return done(`error:${url.searchParams.get('error')}`);
+      try { const { email } = await gmail.finish(String(url.searchParams.get('code') || ''), String(url.searchParams.get('state') || '')); refreshGmail(); return done(`ok:${email}`); }
+      catch (error) { return done(`error:${error.message}`); }
+    }
+    if (req.method === 'POST' && p === '/api/gmail/mute') {
+      const email = String((await readBody(req)).email || '').trim().toLowerCase();
+      if (!/^[\w.+-]+@[\w.-]+$/.test(email)) return json(res, { error: 'Remitente inválido' }, 400);
+      const current = loadConfig().gmail.excludeSenders;
+      await settings.save({ gmail: { excludeSenders: [...new Set([...current, email])] } });
+      const cache = await readJsonFile('gmail.json', { items: [] });
+      await writeJsonFile('gmail.json', { ...cache, items: cache.items.filter((i) => i.email !== email) });
+      return json(res, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/gmail/imap') {
+      const body = await readBody(req);
+      const { email } = await gmailImap.configure(body.email, body.password);
+      refreshGmail();
+      return json(res, { email });
+    }
+    if (req.method === 'POST' && p === '/api/google/unlink') { await Promise.all([gmail.unlink(), gmailImap.unlink()]); await writeJsonFile('gmail.json', { fetchedAt: null, items: [] }); return json(res, { ok: true }); }
     if (req.method === 'POST' && p === '/api/slack/refresh') {
       refreshSlack();
       return json(res, { ok: true });
@@ -1479,7 +1568,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, { running: body.key ? await startTaskTimer(body.key) : await clockify.start(clockifyEntry(body)) });
     }
     if (req.method === 'POST' && p === '/api/clockify/stop') { await clockify.stop(); return json(res, { ok: true }); }
-    if (req.method === 'GET' && p === '/api/settings') return json(res, await settings.status());
+    if (req.method === 'GET' && p === '/api/settings') return json(res, { ...(await settings.status()), google: await mail.status() });
     if (req.method === 'POST' && p === '/api/settings') {
       const config = await settings.save(await readBody(req));
       return json(res, { config, restart: restartSoon() });
@@ -1587,9 +1676,144 @@ const server = http.createServer(async (req, res) => {
 server.on('close', () => liveReload.close());
 server.listen(PORT, '127.0.0.1', () => console.log(`cockpit → http://127.0.0.1:${PORT}`));
 
+// ------------------------------------------------------------------ Casos: pending items analyzed by Claude (read-only)
+
+const caseState = { running: null };
+let casesLock = Promise.resolve();
+// serialized read-modify-write of cases.json: fn(store) → { store, result }
+const mutateCases = (fn) => {
+  const run = casesLock.then(async () => {
+    const { store, result } = await fn(await readJsonFile('cases.json', {}));
+    await writeJsonFile('cases.json', store);
+    return result;
+  });
+  casesLock = run.catch(() => {});
+  return run;
+};
+const syncCases = () => mutateCases(async (store) => ({ store: mergeCases(store, collectCases({
+  slack: (await loadSlack()).items, gmail: (await loadGmail()).items, jira: (await readJsonFile('jira.json', { items: [] })).items || [],
+})) }));
+
+const CASE_TOOLS = ['Read', 'Grep', 'Glob', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git diff:*)', 'Bash(git status:*)', 'Bash(git branch:*)',
+  'Bash(gh pr view:*)', 'Bash(gh pr diff:*)', 'Bash(gh pr checks:*)', 'Bash(gh run view:*)'];
+// project (repo dir) a case belongs to: PR of the ticket → past threads of that ticket → most used repo of the Jira project → repo named in the text
+const pickProject = async (c) => {
+  const text = `${c.title} ${c.text}`;
+  const keys = [...new Set(text.match(TICKET_RE) || [])];
+  const prs = [...(prCache.data?.mine || []), ...(prCache.data?.toReview || [])];
+  const pr = prs.find((p) => p.localDir && fs.existsSync(p.localDir) && keys.some((k) => `${p.title} ${p.branch}`.includes(k)));
+  if (pr) return pr.localDir;
+  const threads = await scanThreads(60, 'all').catch(() => []);
+  const dirOf = (t) => (t.cwd && t.cwd !== HOME && t.cwd.startsWith(REPOS_DIR) && fs.existsSync(t.cwd) ? t.cwd : null);
+  const byKey = threads.find((t) => dirOf(t) && keys.some((k) => t.tickets?.includes(k)));
+  if (byKey) return dirOf(byKey);
+  const prefix = keys[0]?.split('-')[0];
+  if (prefix) {
+    const count = new Map();
+    for (const t of threads) if (dirOf(t) && t.tickets?.some((k) => k.startsWith(`${prefix}-`))) count.set(dirOf(t), (count.get(dirOf(t)) || 0) + 1);
+    const top = [...count.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (top) return top[0];
+  }
+  const hay = text.toLowerCase();
+  return (await listRepos()).find((dir) => path.basename(dir).length > 3 && hay.includes(path.basename(dir).toLowerCase())) || null;
+};
+
+const processCase = async (id) => {
+  const c = await mutateCases((store) => {
+    const found = store[id];
+    if (!found) throw Object.assign(new Error('Caso no encontrado'), { status: 404 });
+    if (Object.values(store).some((x) => x.status === 'processing')) throw Object.assign(new Error('Ya hay un caso en análisis'), { status: 409 });
+    Object.assign(found, { status: 'processing', lastRunAt: new Date().toISOString(), runs: (found.runs || 0) + 1, error: undefined, failedAt: undefined });
+    return { store, result: structuredClone(found) };
+  });
+  caseState.running = id;
+  try {
+    let context = '';
+    if (c.source === 'gmail') context = await mail.threadText(c.ref).catch(() => '');
+    if (c.source === 'jira' && (await direct.has('jira'))) {
+      const j = await direct.jira.issue(c.ref, { comments: 8 }).catch(() => null);
+      if (j) context = `${j.key} «${j.summary}» (${j.status}, ${j.priority}, ${j.type})${j.parent ? `\nTarea padre: ${j.parent.key} «${j.parent.summary}»` : ''}\nReportó: ${j.reporter?.name || '—'}\n\nDescripción:\n${j.description || '(sin descripción)'}${j.subtasks?.length ? `\n\nSubtareas:\n${j.subtasks.map((s) => `- ${s.key} ${s.summary} (${s.status})`).join('\n')}` : ''}${j.comments?.length ? `\n\nComentarios:\n${j.comments.map((m) => `${m.author}: ${m.text}`).join('\n')}` : ''}`;
+    }
+    const keys = [...new Set(`${c.title} ${c.text} ${context}`.match(TICKET_RE) || [])].filter((k) => k !== c.ref).slice(0, 3);
+    const jira = (await direct.has('jira')) ? (await Promise.all(keys.map((k) => direct.jira.issue(k, { comments: 0 }).catch(() => null)))).filter(Boolean) : [];
+    const project = await pickProject(c).catch(() => null);
+    const cwd = [project, REPOS_DIR, HOME].find((d) => d && fs.existsSync(d));
+    const { text } = await runClaudeText(buildPrompt(c, { userName: CONFIG.user.name, project: project ? path.basename(project) : '', context, jira: jira.map((j) => ({ key: j.key, summary: j.summary, status: j.status, assignee: j.assignee?.name, description: j.description })) }), {
+      allowed: [...CASE_TOOLS, ...(c.source === 'slack' ? SLACK_READ_TOOLS : [])], disallowed: ['Edit', 'Write', 'NotebookEdit'], maxTurns: 14, timeoutMs: 5 * 60_000, cwd });
+    const proposal = parseResult(text);
+    await mutateCases((store) => { Object.assign(store[id], { status: 'ready', proposal, project: project ? path.basename(project) : '', projectDir: project || '', processedAt: new Date().toISOString(), note: undefined }); return { store }; });
+  } catch (error) {
+    await mutateCases((store) => { if (store[id]) Object.assign(store[id], { status: 'new', failedAt: new Date().toISOString(), error: error.message }); return { store }; });
+  } finally { caseState.running = null; }
+};
+
+// analysis takes minutes: the request returns at once and the page polls /api/cases
+const startCase = (id) => {
+  if (caseState.running) throw Object.assign(new Error('Ya hay un caso en análisis'), { status: 409 });
+  caseState.running = id;
+  processCase(id).catch((e) => console.error('casos:', e.message)).finally(() => { caseState.running = null; });
+};
+
+// analyzes every case not reviewed yet, most urgent first; stops after two failures in a row (quota, network)
+let batchRunning = false;
+const runBatch = async (max) => {
+  if (batchRunning || caseState.running) return 0;
+  batchRunning = true;
+  let done = 0;
+  let failed = 0;
+  try {
+    await syncCases();
+    while (done < max && failed < 2) {
+      const next = nextToProcess(await readJsonFile('cases.json', {}), { manual: true });
+      if (!next) break;
+      await processCase(next.id).catch((e) => console.error('casos:', e.message));
+      done++;
+      failed = (await readJsonFile('cases.json', {}))[next.id]?.failedAt ? failed + 1 : 0;
+    }
+  } finally { batchRunning = false; }
+  return done;
+};
+
+// daily run at cfg.at (cfg.timezone); if the app was off at that time it catches up once when it starts later that day
+const localClock = (timeZone, at = Date.now()) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(at).map((x) => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, hhmm: `${p.hour}:${p.minute}` };
+};
+const autoCases = async () => {
+  const cfg = loadConfig().cases;
+  if (!cfg?.auto) return;
+  const { day, hhmm } = localClock(cfg.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const last = await readJsonFile('cases-run.json', {});
+  if (hhmm < cfg.at || last.day === day) return;
+  await writeJsonFile('cases-run.json', { day, startedAt: new Date().toISOString() });
+  const n = await runBatch(cfg.maxPerRun);
+  await writeJsonFile('cases-run.json', { day, startedAt: last.startedAt, finishedAt: new Date().toISOString(), analyzed: n });
+};
+
+const listCases = async () => {
+  await syncCases();
+  const cfg = loadConfig().cases;
+  const cases = Object.values(await readJsonFile('cases.json', {})).filter((c) => c.status !== 'resolved' || Date.now() - Date.parse(c.closedAt || 0) < 86_400_000)
+    .sort((a, b) => (a.sev ?? 3) - (b.sev ?? 3) || Date.parse(b.at || 0) - Date.parse(a.at || 0));
+  return { cases, running: caseState.running || (batchRunning ? 'batch' : null), config: cfg, lastRun: await readJsonFile('cases-run.json', {}), gmail: (await mail.status()).linked };
+};
+
+const actOnCase = async (id, index, text) => {
+  const store = await readJsonFile('cases.json', {});
+  const c = store[id];
+  const action = c?.proposal?.actions?.[index];
+  if (!c || !action) throw Object.assign(new Error('Acción no encontrada'), { status: 404 });
+  const body = String(text ?? action.text).trim();
+  if (!body || body.length > 4000) throw Object.assign(new Error('El texto debe tener entre 1 y 4000 caracteres'), { status: 400 });
+  if (action.type === 'comment') await commentJira(action.target, body);
+  else if (c.source === 'slack') await sendSlackReply(c.ref, body);
+  else throw Object.assign(new Error('Gmail es solo lectura: copiá el borrador y respondé desde Gmail.'), { status: 409 });
+  await mutateCases((s) => { Object.assign(s[id], { status: 'done', closedAt: new Date().toISOString(), doneAction: action.label }); return { store: s }; });
+};
+
 // Background refresh: direct APIs and gh only, never Claude
 const backgroundRefresh = () => Promise.allSettled([
-  refreshJira({ background: true }), refreshSlack({ background: true }), loadPrs(true).then(() => loadHealth(true)),
+  refreshJira({ background: true }), refreshSlack({ background: true }), refreshGmail(), loadPrs(true).then(() => loadHealth(true)),
 ]);
 // Notifications: cheap checks every minute (2 Slack searches, 1 JQL, local thread scan)
 const notifyCheck = async () => {
@@ -1605,5 +1829,6 @@ if (process.env.DEVTOWER_BACKGROUND !== '0') {
   setInterval(backgroundRefresh, REFRESH_MS).unref();
   setTimeout(notifyCheck, 8_000).unref();
   setInterval(notifyCheck, 60_000).unref();
+  setTimeout(() => setInterval(() => autoCases().catch((e) => console.error('casos:', e.message)), 90_000).unref(), 60_000).unref();
   setInterval(() => loadPrs(true).catch(() => {}), 2 * 60_000).unref();
 }

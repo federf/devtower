@@ -6,6 +6,13 @@ const { state, api, esc } = C;
 
 state.settings = { data: null, form: null, repos: [], suggest: null, busy: '', msg: null, dirty: false };
 const S = state.settings;
+{ // result of the Google consent screen (the server redirects back with ?google=ok:email | error:reason)
+  const g = new URLSearchParams(location.search).get('google');
+  if (g) {
+    S.msg = g.startsWith('ok:') ? { text: `Gmail conectado como ${g.slice(3)}` } : { err: true, text: `Gmail: ${g.slice(6)}` };
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
+}
 
 const getJson = async (url, body) => {
   const res = await api(url, body);
@@ -79,6 +86,13 @@ const ABOUT = {
     what: 'Registro de horas: iniciar, pausar y cortar el timer de una tarea y usar tus bloques de tiempo recurrentes.',
     details: ['Necesita tu API key personal de Clockify.', 'El timer por tarea está en desarrollo: por ahora solo se vincula la cuenta.'],
   },
+  google: {
+    what: 'Correo en Hoy y Casos: los hilos de Gmail de los últimos 7 días que esperan tu respuesta (no leídos, destacados o importantes; sin promociones ni redes).',
+    details: ['Solo lectura: devtower nunca envía, borra, mueve ni marca como leído ningún correo.',
+      'Con contraseña de aplicación entra por IMAP (sin proyecto de Google Cloud). Si tu admin de Workspace desactivó IMAP o las contraseñas de aplicación, usá la alternativa OAuth.',
+      'Necesita un cliente OAuth tipo «Aplicación de escritorio» de tu proyecto de Google Cloud (se crea una vez). Su ID y secret, y el token de acceso, se guardan en el llavero.',
+      'Si el proyecto está en modo «Prueba», agregá tu cuenta como usuario de prueba.'],
+  },
   claude: {
     what: 'Las acciones con IA: redactar respuestas y comentarios, revisar PRs, investigar CI o logs, y los hilos de trabajo.',
     details: ['Usa tu instalación de Claude Code y tu cuota.', 'Nunca corre sola: leer, refrescar y navegar no usa IA. Cada acción con IA está marcada y abre un hilo que podés ver y cortar.'],
@@ -102,6 +116,15 @@ const ABOUT = {
     details: ['Solo afecta cómo se calculan y muestran las métricas; no cambia nada en Clockify, Jira ni GitHub.',
       'Con «Descontar días no laborables», un PR abierto el viernes y mergeado el lunes cuenta 24 h en vez de 72 h.',
       'Las horas se reparten por el horario de tu equipo (zona horaria de esta máquina).'],
+  },
+  gmailq: {
+    what: 'Qué correos entran como casos. Cuanto más angosto, menos ruido y menos análisis gastando cuota.',
+    details: ['Por defecto: últimos 3 días, no leídos o destacados, dirigidos a vos, sin notificaciones de GitHub ni respuestas automáticas.'],
+  },
+  cases: {
+    what: 'Casos: Claude analiza en segundo plano lo que necesita tu atención y te deja una propuesta, dudas para decidir y acciones listas para aprobar.',
+    details: ['Solo lectura: puede leer tus repos, el hilo completo, tickets y PRs; nunca envía, comenta ni edita nada. Cada acción la aprobás vos con un click.',
+      'Corre una vez al día a la hora que elijas (por defecto 08:00 según el reloj del sistema) y solo analiza los casos que todavía no se relevaron, sobre el proyecto de cada tarea. Gasta cuota de Claude: se hacen de a uno, los más urgentes primero. Podés lanzarlo a mano desde Casos o apagarlo.'],
   },
   links: { what: 'Atajos a tus herramientas (CI, logs, APM, docs…). Se abren con ⌘K desde cualquier sección.', details: [] },
 };
@@ -148,6 +171,22 @@ const renderSettings = () => {
     <p class="note">API key: <a class="lnk" target="_blank" href="https://app.clockify.me/user/preferences#advanced">Clockify → Preferences → Advanced → API</a></p>
     ${tokenRow('clockify', 'API key de Clockify', d.clockify.linked)}`, 'clockify');
 
+  const g = d.google || {};
+  const google = card('Gmail', g.linked ? pill(true, g.email) : g.configured ? pill(null, 'falta autorizar') : pill(null, 'sin vincular'), `
+    ${g.linked ? '' : `<ol class="ssteps"><li>Creá una <a class="lnk" target="_blank" href="https://myaccount.google.com/apppasswords"><b>contraseña de aplicación</b></a> (requiere verificación en 2 pasos): son 16 letras</li>
+      <li>Pegá tu email y esa contraseña acá abajo y tocá Conectar</li></ol>
+    <div class="stoken"><input id="g-email" type="email" placeholder="tu-email@gmail.com / empresa.com" autocomplete="off" spellcheck="false"></div>
+    <div class="stoken"><input type="password" id="g-app" placeholder="Contraseña de aplicación (16 letras)" autocomplete="off">
+      <button class="btn sm primary" data-st="gmail-imap">Conectar</button></div>
+    <details class="sdetails"><summary>Alternativa: Google OAuth (proyecto de Google Cloud)</summary>
+    <ol class="ssteps"><li>En <a class="lnk" target="_blank" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com">Google Cloud</a> habilitá la <b>Gmail API</b></li>
+      <li><a class="lnk" target="_blank" href="https://console.cloud.google.com/apis/credentials">Credenciales</a> → Crear → <b>ID de cliente de OAuth</b> → tipo <b>Aplicación de escritorio</b></li>
+      <li>Pantalla de consentimiento: agregá tu cuenta como usuario de prueba. Pegá acá abajo el ID y el secret y tocá Conectar</li></ol>
+    <div class="stoken"><input id="g-id" placeholder="Client ID (….apps.googleusercontent.com)" autocomplete="off" spellcheck="false"></div>
+    <div class="stoken"><input type="password" id="g-secret" placeholder="Client secret" autocomplete="off">
+      <button class="btn sm primary" data-st="google-connect">Conectar con Google</button></div></details>`}
+    ${g.linked ? '<div class="acts"><button class="btn sm ghost" data-st="google-unlink">Desconectar</button></div>' : ''}`, 'google');
+
   const claude = card('Claude Code', d.claude.installed ? pill(true, d.claude.version) : pill(false, 'no instalado'),
     d.claude.installed ? '' : '<p class="note">Instalalo desde <a class="lnk" target="_blank" href="https://claude.com/claude-code">claude.com/claude-code</a>.</p>', 'claude');
 
@@ -179,6 +218,16 @@ const renderSettings = () => {
 
   const NOTIFY = [['slack', 'Slack: DMs, menciones y respuestas'], ['jira', 'Jira: comentarios en tus tareas'], ['github', 'PRs: cambios pedidos, comentarios, CI, reviews'],
     ['master', 'Master/main en rojo'], ['claude', 'Hilos de Claude que terminaron'], ['native', 'Notificación de macOS (además de 🔔)'], ['slackNative', 'Slack también como notificación de macOS (si no, solo en 🔔)']];
+  const gm = card('Correo que cuenta como pendiente', '', `
+    ${field('gmail.days', 'Días hacia atrás', f.gmail?.days ?? 3, { type: 'number', hint: 'Solo hilos con actividad en estos días' })}
+    <label class="cf-check"><input type="checkbox" data-gmail-pref="onlyDirect" ${f.gmail?.onlyDirect ? 'checked' : ''}> Solo correos dirigidos a mí (sin notificaciones automáticas ni copias)</label>
+    ${field('gmail.excludeSenders', 'Remitentes ignorados', (f.gmail?.excludeSenders || []).join(', '), { hint: 'Emails o fragmentos separados por coma (ej. notifications@github.com, jenkins). También podés silenciar un remitente desde un caso.' })}
+    <p class="note">Siempre solo no leídos o destacados; nunca promociones, redes ni foros.</p>`, 'gmailq');
+  const cases = card('Casos (análisis automático)', '', `
+    <label class="cf-check"><input type="checkbox" data-case-pref="auto" ${f.cases?.auto ? 'checked' : ''}> Que Claude analice solo los casos nuevos (tareas del sprint, Slack, Gmail), una vez al día</label>
+    ${field('cases.at', 'Hora de la corrida diaria (HH:MM)', f.cases?.at ?? '08:00', { placeholder: '08:00' })}
+    ${field('cases.timezone', 'Zona horaria', f.cases?.timezone ?? '', { placeholder: 'vacío = horario del sistema', hint: `Dejalo vacío para usar el reloj de esta máquina (${Intl.DateTimeFormat().resolvedOptions().timeZone}) o poné otra, ej. America/Argentina/Buenos_Aires` })}
+    ${field('cases.maxPerRun', 'Máximo de casos por corrida', f.cases?.maxPerRun ?? 15, { type: 'number', hint: 'Cada análisis usa tu cuota de Claude. Se hacen de a uno, los más urgentes primero.' })}`, 'cases');
   const notify = card('Notificaciones', `<button class="btn sm ghost" data-st="notify-test">Probar</button>`, `
     <div class="schecks">${NOTIFY.map(([k, l]) => `<label class="cf-check"><input type="checkbox" data-notify-pref="${k}" ${f.notify?.[k] === true ? 'checked' : ''}> ${l}</label>`).join('')}</div>`, 'notify');
 
@@ -187,8 +236,8 @@ const renderSettings = () => {
       <p class="note">Preferencias en <code>${esc(d.file)}</code> · tokens en el llavero del sistema, nunca en ese archivo.</p></div>
     ${S.msg ? `<div class="banner ${S.msg.err ? 'err' : ''}" role="status">${esc(S.msg.text)}</div>` : ''}
     ${S.busy ? `<div class="banner">${esc(S.busy)}</div>` : ''}
-    <h3 class="sect-title">Integraciones</h3><div class="sgrid">${github}${jira}${slack}${clockify}${claude}</div>
-    <h3 class="sect-title">Preferencias</h3><div class="sgrid">${general}${deploy}</div><div class="sgrid">${notify}${workweek}</div>${links}
+    <h3 class="sect-title">Integraciones</h3><div class="sgrid">${github}${jira}${slack}${google}${clockify}${claude}</div>
+    <h3 class="sect-title">Preferencias</h3><div class="sgrid">${general}${deploy}</div><div class="sgrid">${notify}${workweek}</div><div class="sgrid">${cases}${gm}</div>${links}
     <div class="ssave ${S.dirty ? 'on' : ''}"><span>${S.dirty ? 'Hay cambios sin guardar' : 'Sin cambios'}</span>
       <button class="btn ghost" data-st="discard" ${S.dirty ? '' : 'disabled'}>Descartar</button>
       <button class="btn primary" data-st="save" ${S.dirty && !S.busy ? '' : 'disabled'}>Guardar y aplicar</button></div>
@@ -206,7 +255,7 @@ document.addEventListener('input', (e) => {
   const t = e.target;
   if (!S.form || !t.closest?.('.settings-view')) return;
   if (t.dataset.path) {
-    const list = ['jira.supportLabels', 'deployCheck.repos'].includes(t.dataset.path);
+    const list = ['jira.supportLabels', 'deployCheck.repos', 'gmail.excludeSenders'].includes(t.dataset.path);
     setPath(S.form, t.dataset.path, list ? t.value.split(',').map((x) => x.trim()).filter(Boolean) : t.value);
     markDirty();
   } else if (t.dataset.link) { S.form.links[Number(t.dataset.link)][t.dataset.k] = t.value; markDirty(); }
@@ -225,6 +274,8 @@ document.addEventListener('change', (e) => {
     S.form.workweek = { ...S.form.workweek, days: [...set].sort() };
     markDirty(); C.render();
   } else if (t.dataset.wwSkip !== undefined) { S.form.workweek = { ...S.form.workweek, skipOffDays: t.checked }; markDirty();
+  } else if (t.dataset.gmailPref) { S.form.gmail = { ...(S.form.gmail || {}), [t.dataset.gmailPref]: t.checked }; markDirty();
+  } else if (t.dataset.casePref) { S.form.cases = { ...(S.form.cases || {}), [t.dataset.casePref]: t.checked }; markDirty();
   } else if (t.dataset.notifyPref) { S.form.notify = { ...(S.form.notify || {}), [t.dataset.notifyPref]: t.checked }; markDirty();
   } else if (t.dataset.path === 'github.org') { S.repos = []; S.form.github.coreRepos = []; markDirty(); loadRepos(t.value); }
 });
@@ -249,6 +300,24 @@ document.addEventListener('click', async (e) => {
         C.toast('macOS bloquea devtower: activalo en Ajustes → Notificaciones. Por ahora avisa el navegador'); return;
       }
       C.toast('Activá devtower en Ajustes del Sistema → Notificaciones (o npm run notifier)'); return;
+    }
+    if (act === 'gmail-imap') {
+      S.busy = 'Comprobando con Gmail…'; C.render();
+      const r = await getJson('/api/gmail/imap', { email: document.getElementById('g-email')?.value || '', password: document.getElementById('g-app')?.value || '' });
+      S.busy = ''; S.msg = { text: `Gmail conectado como ${r.email}` }; S.data = await getJson('/api/settings'); C.render(); return;
+    }
+    if (act === 'google-connect') {
+      const clientId = document.getElementById('g-id')?.value || '';
+      const clientSecret = document.getElementById('g-secret')?.value || '';
+      S.busy = 'Abriendo Google…'; C.render();
+      const r = clientId || clientSecret ? await getJson('/api/google/config', { clientId, clientSecret }) : await getJson('/api/google/connect', {});
+      S.busy = '';
+      window.location.href = r.url; return;
+    }
+    if (act === 'google-unlink') {
+      if (!confirm('¿Desconectar Gmail? Se borran las credenciales del llavero.')) return;
+      await getJson('/api/google/unlink', {});
+      S.msg = { text: 'Gmail desconectado' }; S.data = await getJson('/api/settings'); C.render(); return;
     }
     if (act === 'all-repos') { S.allRepos = true; C.render(); return; }
     if (act === 'discard') { S.form = structuredClone(S.data.config); S.dirty = false; C.render(); return; }

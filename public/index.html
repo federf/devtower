@@ -14,9 +14,13 @@
 <body>
   <div id="app" class="no-dock">
     <nav id="rail">
-      <div class="logo" title="devtower · tu torre de control de desarrollo"><img src="/devtower.svg" alt="" width="32" height="32"><span>devtower</span></div>
+      <div class="rail-top"><div class="logo" title="devtower · tu torre de control de desarrollo"><img src="/devtower.svg" alt="" width="32" height="32"><span>devtower</span></div><button id="side-toggle" class="tbtn" title="Colapsar o expandir la barra lateral"><span>«</span></button></div>
+      <button id="side-palette" class="nav find" title="Ir a una vista, acceso, ticket o buscar
+⌘K"><span>⌕</span><b>Buscar</b><kbd>⌘K</kbd></button>
+      <div class="nav-sec" data-sec="work"><button class="nav-group" aria-expanded="true">Trabajo</button><div class="nav-items">
       <button data-view="today" class="nav active" title="Hoy: lo que necesita tu atención, priorizado (PRs, Slack, Jira)
 ⌥B  ·  ⌘1"><span>◎</span><b>Hoy</b><i id="b-today"></i></button>
+      <button data-view="cases" class="nav" title="Casos: lo que necesita tu atención (Slack, Gmail, PRs), analizado por Claude con propuesta y dudas para decidir"><span>◈</span><b>Casos</b><i id="b-cases"></i></button>
       <button data-view="threads" class="nav" title="Hilos: tus conversaciones de Claude Code, con búsqueda y filtro por fecha
 ⌥H  ·  ⌘2"><span>✦</span><b>Hilos</b><i id="b-threads"></i></button>
       <button data-view="tasks" class="nav" title="Tareas: tus issues de Jira vinculadas con hilos y PRs
@@ -25,17 +29,14 @@
 ⌥R  ·  ⌘4"><span>⑂</span><b>PRs</b><i id="b-prs"></i></button>
       <button data-view="slack" class="nav" title="Slack: mensajes pendientes de tu respuesta
 ⌥S  ·  ⌘5"><span>#</span><b>Slack</b><i id="b-slack"></i></button>
+      </div></div>
+      <div class="nav-sec" data-sec="analysis"><button class="nav-group" aria-expanded="true">Análisis</button><div class="nav-items">
       <button data-view="summary" class="nav" title="Resumen: standup y semanal con lo que entregaste, revisaste y registraste"><span>≡</span><b>Resumen</b></button>
       <button data-view="metrics" class="nav" title="Métricas: en qué invertís el tiempo y dónde mejorar el proceso"><span>◔</span><b>Métricas</b></button>
+      </div></div>
+      <div id="side-links" class="nav-sec" data-sec="links" hidden><button class="nav-group" aria-expanded="true">Accesos rápidos</button><div class="nav-items"></div></div>
       <div class="spacer"></div>
       <button data-view="settings" class="nav" title="Configuración: vincular GitHub, Jira, Slack, Clockify y editar preferencias"><span>⚙</span><b>Config</b></button>
-      <div id="usage-widget" title="Límites de Claude: tocá para ver el detalle"></div>
-      <button id="theme" class="nav" title="Cambiar entre tema claro y oscuro
-⌘⇧L"><span>☀</span><b>Tema</b></button>
-      <button id="toggle-dock" class="nav" title="Mostrar u ocultar el panel de chat
-⌘B"><span>◧</span><b>Chat</b></button>
-      <button id="help-btn" class="nav" title="Ver todos los atajos de teclado
-?  o  ⌘/"><span>⌨</span><b>Atajos</b></button>
     </nav>
 
     <main id="main">
@@ -46,8 +47,17 @@
         <select id="days" title="Mostrar solo hilos cuya última interacción cae en este rango"></select>
         <select id="sdays" title="Hasta cuánto tiempo atrás buscar en los hilos (por defecto 1 año)" hidden></select>
         <div id="stats" hidden></div><span class="spacer"></span>
+        <div id="usage-widget" title="Consumo de Claude (ventana de 5 h y semanal): tocá para ver el detalle"></div>
         <button id="refresh" class="btn ghost" title="Recarga hilos y PRs. En Slack y Tareas consulta con Claude y consume cuota
 ⌘⇧R">↻ Actualizar</button>
+        <div id="top-tools">
+          <button id="toggle-dock" class="tbtn" title="Mostrar u ocultar el panel de chat
+⌘B"><span>◧</span><b>Chat</b></button>
+          <button id="theme" class="tbtn" title="Cambiar entre tema claro y oscuro
+⌘⇧L"><span>☀</span><b>Tema</b></button>
+          <button id="help-btn" class="tbtn" title="Ver todos los atajos de teclado
+?  o  ⌘/"><span>⌨</span><b>Atajos</b></button>
+        </div>
       </header>
       <section id="content"></section>
     </main>
@@ -105,6 +115,8 @@ Esc">■ Detener</button>
   <script src="/app.js" type="module"></script>
   <script src="/work.js" type="module"></script>
   <script src="/palette.js" type="module"></script>
+  <script src="/cases.js" type="module"></script>
+  <script src="/sidebar.js" type="module"></script>
   <script src="/health.js" type="module"></script>
   <script src="/deploy.js" type="module"></script>
   <script src="/close-task.js" type="module"></script>
