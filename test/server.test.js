@@ -128,29 +128,20 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     } finally { clearTimeout(timeout); abort.abort(); await reader.cancel().catch(() => {}); }
   });
 
-  await t.test('explicit refresh reports quota and preserves cached items and timestamps', async () => {
-    await plan(quota);
+  await t.test('explicit refresh without token reports token_missing, keeps cache and never calls Claude', async () => {
     for (const provider of ['slack', 'jira']) {
       assert.equal((await request(`/api/${provider}/refresh`, {})).status, 200);
       const result = await waitSource(provider);
-      assert.equal(result.errorCode, 'claude_usage_limit');
-      assert.equal(result.resetAt, '1:50pm (America/Cordoba)');
-      assert.match(result.error, /límite de uso de Claude/);
-      assert.doesNotMatch(result.error, /private-session|session_id|is_error/);
+      assert.equal(result.errorCode, 'token_missing');
       assert.equal(result.items.length, 1);
       assert.equal(result.fetchedAt, '2026-10-15T12:00:00Z');
     }
-    const calls = (await fs.readFile(path.join(root, 'claude-called'), 'utf8')).trim().split('\n').map(JSON.parse);
-    const slackArgs = calls[0];
-    const allowed = slackArgs.slice(slackArgs.indexOf('--allowedTools') + 1);
-    assert.equal(allowed.length, 5);
-    assert.ok(allowed.every((tool) => tool.startsWith('mcp__claude_ai_Slack__slack_') && !tool.includes('*')));
-    assert.ok(calls[1].includes('mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql'));
+    await assert.rejects(fs.access(path.join(root, 'claude-called')), { code: 'ENOENT' });
   });
 
   await t.test('suggest, draft and Jira actions return descriptive HTTP429, never raw CLI JSON', async () => {
     await plan(quota);
-    for (const route of ['slack/suggest', 'slack/draft', 'jira/comment', 'jira/transitions', 'jira/transition']) {
+    for (const route of ['slack/suggest', 'slack/draft']) {
       const result = await request(`/api/${route}`, { id: route === 'jira/transition' ? '31' : 'slack-fixture', key: 'TEST-1', text: 'fixture', name: 'Done' });
       assert.equal(result.status, 429, route);
       assert.equal(result.data.code, 'claude_usage_limit');
@@ -241,15 +232,11 @@ test('HTTP lifecycle with isolated Claude history and no external services', asy
     assert.equal(args[args.indexOf('--model') + 1], 'sonnet');
   });
 
-  await t.test('a successful retry clears the error and updates cache', async () => {
-    for (const provider of ['slack', 'jira']) {
-      const items = provider === 'slack' ? [{ id: 'new-item', text: 'Updated' }] : [{ key: 'TEST-2', summary: 'Updated' }];
-      await plan({ result: JSON.stringify({ items }), is_error: false });
-      await request(`/api/${provider}/refresh`, {});
-      const result = await waitSource(provider);
-      assert.equal(result.error, null); assert.equal(result.errorCode, null); assert.equal(result.resetAt, null);
-      assert.equal(result.items.length, 1);
-      assert.notEqual(result.fetchedAt, '2026-10-15T12:00:00Z');
+  await t.test('Jira actions without token fail with token_missing instead of calling Claude', async () => {
+    for (const route of ['jira/comment', 'jira/transitions', 'jira/transition']) {
+      const result = await request(`/api/${route}`, { id: '31', key: 'TEST-1', text: 'fixture', name: 'Done' });
+      assert.equal(result.status, 503, route);
+      assert.equal(result.data.code, 'token_missing');
     }
   });
 

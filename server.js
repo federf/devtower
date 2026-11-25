@@ -969,24 +969,6 @@ const startTaskTimer = async (key) => {
 const slackState = { running: false, error: null, errorCode: null, resetAt: null };
 
 const SLACK_ME = CONFIG.slack.userId || 'desconocido';
-const SLACK_PROMPT = `Sos un asistente que SOLO LEE Slack (no envíes, reacciones ni borradores). Soy ${CONFIG.user.name || 'el usuario'}, user id Slack ${SLACK_ME}.
-Hacé como máximo 3 búsquedas (slack_search_public_and_private con filters "with:<@${SLACK_ME}> after:<hace 7 días>", más DMs recientes) y NO leas hilos enteros salvo que sea imprescindible.
-Encontrá conversaciones de los últimos 7 días donde estoy pendiente de responder:
-- menciones mías en canales sin respuesta mía posterior,
-- DMs donde el último mensaje es de otra persona,
-- hilos donde participé y alguien respondió después de mi último mensaje.
-Excluí bots, alertas automáticas y canales de logs. Máximo 15 items, del más reciente al más viejo.
-Respondé ÚNICAMENTE con JSON válido (sin markdown, sin texto extra) con esta forma:
-{"items":[{"id":"<channelId>-<slackTs>","kind":"mention|dm|thread","channel":"#nombre o DM","channelId":"C… o D…","author":"nombre","text":"texto del mensaje (máx 400 chars)","ts":"ISO-8601","slackTs":"1760562395.123456","threadTs":"ts del hilo raíz si es un hilo, sino igual a slackTs","permalink":"https://<workspace>.slack.com/archives/<channelId>/p<slackTs sin punto>","reason":"por qué está pendiente (máx 80 chars)"}]}
-IMPORTANTE: copiá channelId, slackTs, threadTs y permalink TAL CUAL los devuelven las herramientas de Slack. NUNCA los inventes ni uses placeholders: si no tenés un valor real, dejalo como "".`;
-
-const extractJson = (text) => {
-  const start = text.indexOf('{"items"');
-  const from = start >= 0 ? start : text.indexOf('{');
-  const to = text.lastIndexOf('}');
-  return JSON.parse(text.slice(from, to + 1));
-};
-
 const refreshSlack = async ({ background = false } = {}) => {
   if (slackState.running) return;
   slackState.running = true;
@@ -994,16 +976,7 @@ const refreshSlack = async ({ background = false } = {}) => {
     const viaApi = await direct.has('slack');
     if (background && !viaApi) return;
     Object.assign(slackState, { error: null, errorCode: null, resetAt: null });
-    if (viaApi) {
-      await writeJsonFile('slack.json', { fetchedAt: new Date().toISOString(), items: await direct.slack.pending() });
-      return;
-    }
-    const { text } = await runClaudeText(SLACK_PROMPT, {
-      allowed: SLACK_READ_TOOLS, maxTurns: 14, timeoutMs: 6 * 60_000,
-    });
-    const parsed = extractJson(text);
-    if (!Array.isArray(parsed.items)) throw new Error('Invalid Slack items');
-    await writeJsonFile('slack.json', { fetchedAt: new Date().toISOString(), items: parsed.items });
+    await writeJsonFile('slack.json', { fetchedAt: new Date().toISOString(), items: await direct.slack.pending() });
   } catch (error) {
     Object.assign(slackState, { error: error.code ? error.message : 'No se pudo actualizar Slack. Reintentá la consulta.',
       errorCode: error.code || 'slack_refresh_failed', resetAt: error.resetAt || null });
@@ -1288,20 +1261,8 @@ const loadUsage = async () => {
 // ------------------------------------------------------------------- Jira
 
 const JIRA_SITE = CONFIG.jira.site;
-const JIRA_CLOUD_ID = CONFIG.jira.cloudId || JIRA_SITE;
-const JIRA_TOOL = 'mcp__claude_ai_Atlassian__';
 const JIRA_KEY_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,7}$/;
 const jiraState = { running: false, error: null, errorCode: null, resetAt: null };
-const jiraHint = (tool) => `Cargá la herramienta con ToolSearch usando exactamente la consulta "select:${JIRA_TOOL}${tool}". Usá SOLO el conector "claude.ai Atlassian" (prefijo ${JIRA_TOOL}); NO uses "Atlassian MCP" ni intentes autenticar. Si ToolSearch dice que el conector todavía está conectando, volvé a buscar (hasta 6 veces) antes de rendirte.`;
-
-const parseJsonLoose = (text) => {
-  const clean = text.replace(/```(?:json)?/g, '');
-  const starts = ['{', '['].map((c) => clean.indexOf(c)).filter((i) => i >= 0);
-  const end = Math.max(clean.lastIndexOf('}'), clean.lastIndexOf(']'));
-  if (starts.length === 0 || end < 0) throw new Error('la respuesta no contiene JSON');
-  return JSON.parse(clean.slice(Math.min(...starts), end + 1));
-};
-
 const refreshJira = async ({ background = false } = {}) => {
   if (jiraState.running) return;
   jiraState.running = true;
@@ -1309,23 +1270,12 @@ const refreshJira = async ({ background = false } = {}) => {
     const viaApi = await direct.has('jira');
     if (background && !viaApi) return;
     Object.assign(jiraState, { error: null, errorCode: null, resetAt: null });
-    if (viaApi) {
-      const { next = null } = await readJsonFile('jira.json', {});
-      const items = await direct.jira.search();
-      const board = await sprintBoard(items);
-      await writeJsonFile('jira.json', { fetchedAt: new Date().toISOString(), items: await withLanes(items, board), board, next });
-      // si ya se consultó el próximo sprint, se actualiza junto con el resto (si no, quedan reasignaciones viejas)
-      if (next) await loadNextSprint().catch((e) => console.error('próximo sprint:', e.message));
-      return;
-    }
-    const prompt = `${jiraHint('searchJiraIssuesUsingJql')}
-Solo lectura. Usá searchJiraIssuesUsingJql (cloudId ${JIRA_CLOUD_ID}) con el JQL: assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC, hasta 40 resultados, pidiendo los campos summary, status, priority, issuetype, updated, parent.
-Respondé ÚNICAMENTE JSON válido, sin markdown: {"items":[{"key":"","summary":"","status":"nombre del estado","statusCategory":"new|indeterminate","priority":"","type":"","updated":"ISO-8601","parent":"KEY del padre o vacío"}]}. No inventes datos.`;
-    const { text } = await runClaudeText(prompt, { allowed: [`${JIRA_TOOL}searchJiraIssuesUsingJql`], maxTurns: 14, timeoutMs: 240_000 });
-    const items = (parseJsonLoose(text).items || [])
-      .filter((i) => JIRA_KEY_RE.test(i.key || ''))
-      .map((i) => ({ ...i, url: `${JIRA_SITE}/browse/${i.key}` }));
-    await writeJsonFile('jira.json', { fetchedAt: new Date().toISOString(), items });
+    const { next = null } = await readJsonFile('jira.json', {});
+    const items = await direct.jira.search();
+    const board = await sprintBoard(items);
+    await writeJsonFile('jira.json', { fetchedAt: new Date().toISOString(), items: await withLanes(items, board), board, next });
+    // si ya se consultó el próximo sprint, se actualiza junto con el resto (si no, quedan reasignaciones viejas)
+    if (next) await loadNextSprint().catch((e) => console.error('próximo sprint:', e.message));
   } catch (e) {
     Object.assign(jiraState, { error: e.code ? e.message : 'No se pudo actualizar Jira. Reintentá la consulta.',
       errorCode: e.code || 'jira_refresh_failed', resetAt: e.resetAt || null });
@@ -1373,35 +1323,18 @@ const commentJira = async (key, text, mentions = []) => {
   const issue = assertJiraKey(key);
   const valid = (Array.isArray(mentions) ? mentions : []).filter((m) => ACCOUNT_RE.test(String(m?.accountId || '')))
     .slice(0, 5).map((m) => ({ accountId: String(m.accountId), name: String(m.name || '').slice(0, 80) }));
-  if (await direct.has('jira')) return void await direct.jira.comment(issue, text, valid);
-  if (valid.length) throw Object.assign(new Error('Las menciones requieren el token de Jira en el Keychain.'), { code: 'token_missing', status: 503 });
-  const prompt = `${jiraHint('addCommentToJiraIssue')}
-Usá addCommentToJiraIssue (cloudId ${JIRA_CLOUD_ID}, issue ${issue}) para publicar este comentario EXACTO, sin modificarlo:
-<<<
-${text}
->>>
-Si se publicó, respondé solo la palabra OK. Si falló, respondé ERROR y el motivo.`;
-  const { text: reply } = await runClaudeText(prompt, { allowed: [`${JIRA_TOOL}addCommentToJiraIssue`], maxTurns: 14, timeoutMs: 150_000 });
-  if (!/^\W*OK\b/i.test(reply)) throw new Error(`Jira no confirmó el comentario: ${reply.slice(0, 200)}`);
+  await direct.jira.comment(issue, text, valid);
 };
 
 const listJiraTransitions = async (key) => {
   const issue = assertJiraKey(key);
-  if (await direct.has('jira')) return direct.jira.transitions(issue);
-  const prompt = `${jiraHint('getTransitionsForJiraIssue')}
-Solo lectura. Usá getTransitionsForJiraIssue (cloudId ${JIRA_CLOUD_ID}, issue ${issue}). Respondé ÚNICAMENTE JSON: {"transitions":[{"id":"","name":"nombre de la transición","to":"estado destino"}]}`;
-  const { text } = await runClaudeText(prompt, { allowed: [`${JIRA_TOOL}getTransitionsForJiraIssue`], maxTurns: 14, timeoutMs: 150_000 });
-  return (parseJsonLoose(text).transitions || []).filter((t) => /^\d+$/.test(String(t.id)));
+  return direct.jira.transitions(issue);
 };
 
 const transitionJira = async (key, id, name) => {
   const issue = assertJiraKey(key);
   if (!/^\d+$/.test(String(id))) throw new Error('Transición inválida');
-  if (await direct.has('jira')) return void await direct.jira.transition(issue, id);
-  const prompt = `${jiraHint('transitionJiraIssue')}
-Usá transitionJiraIssue (cloudId ${JIRA_CLOUD_ID}, issue ${issue}) con la transición id ${id} (${String(name).slice(0, 60)}). No hagas nada más. Si se aplicó, respondé solo OK. Si falló, ERROR y el motivo.`;
-  const { text: reply } = await runClaudeText(prompt, { allowed: [`${JIRA_TOOL}transitionJiraIssue`], maxTurns: 14, timeoutMs: 150_000 });
-  if (!/^\W*OK\b/i.test(reply)) throw new Error(`Jira no confirmó el cambio de estado: ${reply.slice(0, 200)}`);
+  await direct.jira.transition(issue, id);
 };
 
 // Explicit user action only: posts as the user, then hides the answered item
